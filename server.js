@@ -1,0 +1,490 @@
+// =========================================================
+// Henry's IMF - server
+//   - Logins: tap your face + 4-digit PIN (Director uses a password)
+//   - New agents sign up, the Director approves them
+//   - Every request checks WHO is asking (signed login cookie)
+//   - Secure Comms (chats), Locate Agent (map), video call signaling
+// Settings (database password etc.) live in the .env file, not here.
+// =========================================================
+const express = require("express");
+const mysql = require("mysql2");
+const path = require("path");
+const http = require("http");
+const crypto = require("crypto");
+const WebSocket = require("ws");
+const config = require("./config");
+
+const app = express();
+app.set("trust proxy", 1); // so https is detected correctly behind nginx on EC2
+app.use(express.json({ limit: "20kb" }));
+app.use(express.static(path.join(__dirname, "public")));
+
+// ---------------------------------------------------------
+// Database (a pool reconnects by itself if MySQL restarts)
+// ---------------------------------------------------------
+const pool = mysql.createPool({
+  host: config.DB_HOST,
+  user: config.DB_USER,
+  password: config.DB_PASSWORD,
+  database: config.DB_NAME,
+  waitForConnections: true,
+  connectionLimit: 10,
+});
+const db = pool.promise();
+const q = async (sql, params = []) => (await db.query(sql, params))[0];
+
+// ---------------------------------------------------------
+// Database upgrades: only ADD things, never delete. Safe to run every start.
+// ---------------------------------------------------------
+async function hasColumn(table, column) {
+  const rows = await q(
+    `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+    [table, column]
+  );
+  return rows[0].n > 0;
+}
+async function addColumn(table, column, ddl, afterAdd) {
+  if (await hasColumn(table, column)) return;
+  await q(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  console.log(`✅ Added ${table}.${column}`);
+  if (afterAdd) await afterAdd();
+}
+
+async function upgradeDatabase() {
+  // Unread badges (old messages count as already read)
+  await addColumn("messages", "read_at", "DATETIME NULL", () =>
+    q("UPDATE messages SET read_at = created_at WHERE read_at IS NULL"));
+
+  // Logins
+  await addColumn("agents", "pin_hash", "VARCHAR(255) NULL");
+  await addColumn("agents", "password_hash", "VARCHAR(255) NULL");
+  await addColumn("agents", "status", "VARCHAR(20) NOT NULL DEFAULT 'active'"); // existing agents stay active
+  await addColumn("agents", "is_director", "TINYINT NOT NULL DEFAULT 0");
+
+  // Scramble any old plain-text passwords, then wipe the readable copy
+  const legacy = await q("SELECT agent_name, password FROM agents WHERE password_hash IS NULL AND password IS NOT NULL AND password <> ''");
+  for (const a of legacy) {
+    await q("UPDATE agents SET password_hash = ?, password = '' WHERE agent_name = ?", [hashSecret(a.password), a.agent_name]);
+  }
+  if (legacy.length) console.log(`🔒 Secured ${legacy.length} old password(s)`);
+
+  // Who is the Director? (set DIRECTOR=YourAgentName in .env)
+  if (config.DIRECTOR) {
+    const r = await q("UPDATE agents SET is_director = 1, status = 'active' WHERE agent_name = ?", [config.DIRECTOR]);
+    if (!r.affectedRows) console.warn(`⚠️  DIRECTOR "${config.DIRECTOR}" in .env doesn't match any agent name`);
+  } else {
+    console.warn("⚠️  No DIRECTOR set in .env - nobody can approve new agents yet");
+  }
+
+  // Locate Agent
+  await q(`
+    CREATE TABLE IF NOT EXISTS agent_locations (
+      agent_name VARCHAR(100) NOT NULL PRIMARY KEY,
+      lat DOUBLE NOT NULL,
+      lng DOUBLE NOT NULL,
+      accuracy DOUBLE NULL,
+      updated_at DATETIME NOT NULL
+    )`);
+}
+
+// ---------------------------------------------------------
+// Secrets: PINs and passwords are stored scrambled (scrypt)
+// ---------------------------------------------------------
+function hashSecret(secret) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(String(secret), salt, 64).toString("hex");
+  return `scrypt$${salt}$${hash}`;
+}
+function checkSecret(secret, stored) {
+  const [kind, salt, hash] = String(stored || "").split("$");
+  if (kind !== "scrypt" || !salt || !hash) return false;
+  const test = crypto.scryptSync(String(secret), salt, 64);
+  const real = Buffer.from(hash, "hex");
+  return real.length === test.length && crypto.timingSafeEqual(real, test);
+}
+const isPin = (p) => /^\d{4}$/.test(String(p || ""));
+const cleanName = (s) => String(s || "").trim().replace(/\s+/g, " ");
+const validName = (s) => /^[\p{L}\p{N} ._'-]{2,30}$/u.test(s);
+const sameName = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+
+// ---------------------------------------------------------
+// Login cookie: "agent name + expiry", signed so it can't be faked
+// ---------------------------------------------------------
+const COOKIE = "imf_session";
+const SESSION_DAYS = 90;
+
+function makeToken(agentName) {
+  const body = Buffer.from(JSON.stringify({ a: agentName, exp: Date.now() + SESSION_DAYS * 86400000 })).toString("base64url");
+  const sig = crypto.createHmac("sha256", config.SESSION_SECRET).update(body).digest("base64url");
+  return `${body}.${sig}`;
+}
+function readToken(token) {
+  const [body, sig] = String(token || "").split(".");
+  if (!body || !sig) return null;
+  const good = crypto.createHmac("sha256", config.SESSION_SECRET).update(body).digest("base64url");
+  if (sig.length !== good.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(good))) return null;
+  try {
+    const data = JSON.parse(Buffer.from(body, "base64url").toString());
+    return data.exp > Date.now() ? data.a : null;
+  } catch {
+    return null;
+  }
+}
+function getCookie(req, name) {
+  const header = req.headers.cookie || "";
+  for (const part of header.split(";")) {
+    const i = part.indexOf("=");
+    if (i > -1 && part.slice(0, i).trim() === name) return decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return null;
+}
+function setLoginCookie(req, res, agentName) {
+  res.cookie(COOKIE, makeToken(agentName), {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: req.secure, // true once on https
+    maxAge: SESSION_DAYS * 86400000,
+    path: "/",
+  });
+}
+
+// Look up the logged-in agent (cached briefly so it's fast)
+const agentCache = new Map();
+async function agentFromRequest(req) {
+  const name = readToken(getCookie(req, COOKIE));
+  if (!name) return null;
+  const hit = agentCache.get(name);
+  if (hit && Date.now() - hit.t < 30000) return hit.agent;
+  const rows = await q("SELECT agent_name, status, is_director FROM agents WHERE agent_name = ?", [name]);
+  const agent = rows[0] && rows[0].status === "active"
+    ? { name: rows[0].agent_name, isDirector: !!rows[0].is_director }
+    : null;
+  agentCache.set(name, { agent, t: Date.now() });
+  return agent;
+}
+const forgetAgent = (name) => agentCache.delete(name);
+
+// Route guards
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch((err) => {
+  console.error("💥", req.method, req.path, err);
+  res.status(500).json({ success: false, message: "Server error" });
+});
+const requireAgent = wrap(async (req, res, next) => {
+  const agent = await agentFromRequest(req);
+  if (!agent) return res.status(401).json({ success: false, message: "Please log in" });
+  req.agent = agent;
+  next();
+});
+const requireDirector = (req, res, next) =>
+  req.agent?.isDirector ? next() : res.status(403).json({ success: false, message: "Director only" });
+
+// Wrong-PIN lockout: 5 misses = 5 minute timeout for that agent
+const misses = new Map();
+function lockedOut(name) {
+  const m = misses.get(name.toLowerCase());
+  return m && m.until > Date.now() ? Math.ceil((m.until - Date.now()) / 60000) : 0;
+}
+function recordMiss(name) {
+  const key = name.toLowerCase();
+  const m = misses.get(key) || { n: 0, until: 0 };
+  m.n += 1;
+  if (m.n >= 5) { m.until = Date.now() + 5 * 60000; m.n = 0; }
+  misses.set(key, m);
+}
+
+// ---------------------------------------------------------
+// Pages
+// ---------------------------------------------------------
+app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
+app.get("/dossier.html", (req, res) => res.sendFile(path.join(__dirname, "public", "dossier.html")));
+
+// ---------------------------------------------------------
+// Login / sign-up
+// ---------------------------------------------------------
+
+// Step 1: which kind of login does this agent use?
+// (Unknown names get "pin" too, so this can't be used to discover who's in the app.)
+app.post("/api/login/start", wrap(async (req, res) => {
+  const name = cleanName(req.body?.agent_name);
+  const rows = name ? await q("SELECT agent_name, pin_hash, is_director FROM agents WHERE agent_name = ?", [name]) : [];
+  const a = rows[0];
+  let method = "pin";
+  if (a && a.is_director) method = "password";
+  else if (a && !a.pin_hash) method = "legacy"; // old account: old password once, then pick a PIN
+  res.json({ success: true, method, agent_name: a ? a.agent_name : name });
+}));
+
+// Step 2: PIN (agents) or password (Director / first login on an old account)
+app.post("/api/login", wrap(async (req, res) => {
+  const name = cleanName(req.body?.agent_name);
+  const { pin, password } = req.body || {};
+  const fail = (message, status = 401) => res.status(status).json({ success: false, message });
+  if (!name) return fail("Pick an agent");
+
+  const wait = lockedOut(name);
+  if (wait) return fail(`Too many tries. Wait ${wait} minute${wait > 1 ? "s" : ""}.`, 429);
+
+  const rows = await q("SELECT agent_name, pin_hash, password_hash, status, is_director FROM agents WHERE agent_name = ?", [name]);
+  const a = rows[0];
+  let ok = false;
+  if (a && pin !== undefined && a.pin_hash && !a.is_director) ok = checkSecret(pin, a.pin_hash);
+  if (a && password !== undefined && (a.is_director || !a.pin_hash)) ok = checkSecret(password, a.password_hash);
+
+  if (!ok) {
+    recordMiss(name);
+    console.log("❌ Failed login:", name);
+    return fail(pin !== undefined ? "Wrong PIN" : "Wrong password");
+  }
+  misses.delete(name.toLowerCase());
+  if (a.status === "pending") return fail("Waiting for the Director to approve you 🕵️", 403);
+  if (a.status !== "active") return fail("This agent is switched off. Ask the Director.", 403);
+
+  setLoginCookie(req, res, a.agent_name);
+  console.log("✅ Login:", a.agent_name);
+  res.json({
+    success: true,
+    agent: { agent_name: a.agent_name, is_director: !!a.is_director },
+    needsPin: !a.is_director && !a.pin_hash,
+  });
+}));
+
+app.post("/api/logout", (req, res) => {
+  res.clearCookie(COOKIE, { path: "/" });
+  res.json({ success: true });
+});
+
+// Who am I? (the dossier asks this first)
+app.get("/api/me", requireAgent, (req, res) => {
+  res.json({ success: true, agent: { agent_name: req.agent.name, is_director: req.agent.isDirector } });
+});
+
+// Choose / change my PIN
+app.post("/api/me/pin", requireAgent, wrap(async (req, res) => {
+  const { pin } = req.body || {};
+  if (!isPin(pin)) return res.status(400).json({ success: false, message: "PIN must be 4 numbers" });
+  await q("UPDATE agents SET pin_hash = ? WHERE agent_name = ?", [hashSecret(pin), req.agent.name]);
+  res.json({ success: true });
+}));
+
+// New agent asks to join -> waits for the Director
+app.post("/api/register", wrap(async (req, res) => {
+  const name = cleanName(req.body?.agent_name);
+  const { pin, email, bio } = req.body || {};
+  if (!validName(name)) return res.status(400).json({ success: false, message: "Code name: 2-30 letters or numbers" });
+  if (!isPin(pin)) return res.status(400).json({ success: false, message: "PIN must be 4 numbers" });
+
+  const taken = await q("SELECT 1 FROM agents WHERE LOWER(agent_name) = LOWER(?)", [name]);
+  if (taken.length) return res.status(409).json({ success: false, message: "That code name is taken" });
+
+  await q(
+    `INSERT INTO agents (agent_name, email, password, bio, profile_pic, clearance_level, location, pin_hash, status)
+     VALUES (?, ?, '', ?, 'default.png', 1, 'Unknown', ?, 'pending')`,
+    [name, String(email || "").trim(), String(bio || "").trim().slice(0, 500), hashSecret(pin)]
+  );
+  console.log("📝 New agent request:", name);
+  notifyDirectors({ type: "agent-request", agent: name });
+  res.json({ success: true, message: "Request sent! The Director has to approve you before you can log in." });
+}));
+
+// ---------------------------------------------------------
+// Agents
+// ---------------------------------------------------------
+app.get("/api/agents", requireAgent, wrap(async (req, res) => {
+  const rows = await q("SELECT agent_name FROM agents WHERE status = 'active' ORDER BY agent_name ASC");
+  res.json({ success: true, agents: rows.map((r) => r.agent_name) });
+}));
+
+async function activeAgentNamed(name) {
+  const rows = await q("SELECT agent_name FROM agents WHERE agent_name = ? AND status = 'active'", [cleanName(name)]);
+  return rows[0]?.agent_name || null;
+}
+
+// ---------------------------------------------------------
+// Secure Comms (always as the logged-in agent)
+// ---------------------------------------------------------
+app.post("/api/messages", requireAgent, wrap(async (req, res) => {
+  const content = String(req.body?.content || "").trim();
+  const recipient = await activeAgentNamed(req.body?.recipient);
+  if (!recipient || !content) return res.status(400).json({ success: false, message: "Missing recipient or message" });
+  if (content.length > 2000) return res.status(400).json({ success: false, message: "Message too long" });
+
+  const result = await q("INSERT INTO messages (sender, recipient, content) VALUES (?, ?, ?)", [req.agent.name, recipient, content]);
+  notifyAgent(recipient, { type: "new-message", from: req.agent.name });
+  res.json({ success: true, messageId: result.insertId });
+}));
+
+// Everyone I've chatted with, newest first
+app.get("/api/conversations", requireAgent, wrap(async (req, res) => {
+  const me = req.agent.name;
+  const rows = await q(
+    `SELECT sender, recipient, content, created_at, read_at FROM messages
+     WHERE sender = ? OR recipient = ? ORDER BY created_at ASC`, [me, me]);
+
+  const byPartner = new Map();
+  for (const m of rows) {
+    const fromMe = sameName(m.sender, me);
+    const partner = String(fromMe ? m.recipient : m.sender).trim();
+    const key = partner.toLowerCase();
+    if (!key || key === me.toLowerCase()) continue;
+    const c = byPartner.get(key) || { agent: partner, unread: 0 };
+    c.lastMessage = m.content;
+    c.lastFromMe = fromMe;
+    c.lastAt = m.created_at;
+    if (!fromMe && !m.read_at) c.unread += 1;
+    byPartner.set(key, c);
+  }
+  const conversations = [...byPartner.values()].sort((a, b) => new Date(b.lastAt) - new Date(a.lastAt));
+  res.json({ success: true, conversations });
+}));
+
+// One chat, oldest first
+app.get("/api/thread/:other", requireAgent, wrap(async (req, res) => {
+  const me = req.agent.name, other = req.params.other;
+  const rows = await q(
+    `SELECT sender, recipient, content, created_at, read_at FROM messages
+     WHERE (sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?)
+     ORDER BY created_at ASC`, [me, other, other, me]);
+  res.json({ success: true, messages: rows.map((m) => ({ ...m, fromMe: sameName(m.sender, me) })) });
+}));
+
+app.post("/api/thread/:other/read", requireAgent, wrap(async (req, res) => {
+  await q("UPDATE messages SET read_at = ? WHERE sender = ? AND recipient = ? AND read_at IS NULL",
+    [new Date(), req.params.other, req.agent.name]);
+  res.json({ success: true });
+}));
+
+// ---------------------------------------------------------
+// Locate Agent (shared while the app is open)
+// ---------------------------------------------------------
+app.post("/api/location", requireAgent, wrap(async (req, res) => {
+  const la = Number(req.body?.lat), ln = Number(req.body?.lng), accRaw = Number(req.body?.accuracy);
+  if (!Number.isFinite(la) || !Number.isFinite(ln) || Math.abs(la) > 90 || Math.abs(ln) > 180) {
+    return res.status(400).json({ success: false, message: "Bad location" });
+  }
+  const acc = Number.isFinite(accRaw) ? accRaw : null;
+  const now = new Date();
+  const agent = req.agent.name;
+  const r = await q("UPDATE agent_locations SET lat = ?, lng = ?, accuracy = ?, updated_at = ? WHERE agent_name = ?", [la, ln, acc, now, agent]);
+  if (!r.affectedRows) {
+    await q("INSERT INTO agent_locations (agent_name, lat, lng, accuracy, updated_at) VALUES (?, ?, ?, ?, ?)", [agent, la, ln, acc, now]);
+  }
+  broadcast({ type: "location", agent, lat: la, lng: ln, accuracy: acc, updated_at: now });
+  res.json({ success: true });
+}));
+
+app.get("/api/locations", requireAgent, wrap(async (req, res) => {
+  const rows = await q(
+    `SELECT l.agent_name, l.lat, l.lng, l.accuracy, l.updated_at
+     FROM agent_locations l JOIN agents a ON a.agent_name = l.agent_name
+     WHERE a.status = 'active'`);
+  res.json({ success: true, locations: rows });
+}));
+
+// ---------------------------------------------------------
+// Director Console
+// ---------------------------------------------------------
+app.get("/api/director/agents", requireAgent, requireDirector, wrap(async (req, res) => {
+  const rows = await q("SELECT agent_name, email, bio, status, is_director, (pin_hash IS NOT NULL) AS has_pin FROM agents ORDER BY status DESC, agent_name ASC");
+  res.json({ success: true, agents: rows.map((r) => ({ ...r, is_director: !!r.is_director, has_pin: !!r.has_pin })) });
+}));
+
+app.post("/api/director/agents/:name/:action", requireAgent, requireDirector, wrap(async (req, res) => {
+  const { name, action } = req.params;
+  const rows = await q("SELECT agent_name, is_director FROM agents WHERE agent_name = ?", [name]);
+  const target = rows[0];
+  if (!target) return res.status(404).json({ success: false, message: "No such agent" });
+  if (target.is_director && action !== "reset-pin") {
+    return res.status(400).json({ success: false, message: "Can't change the Director's own account here" });
+  }
+
+  if (action === "approve" || action === "activate") {
+    await q("UPDATE agents SET status = 'active' WHERE agent_name = ?", [name]);
+  } else if (action === "deactivate") {
+    await q("UPDATE agents SET status = 'disabled' WHERE agent_name = ?", [name]);
+  } else if (action === "reject") {
+    await q("DELETE FROM agents WHERE agent_name = ? AND status = 'pending'", [name]);
+  } else if (action === "reset-pin") {
+    const { pin } = req.body || {};
+    if (!isPin(pin)) return res.status(400).json({ success: false, message: "PIN must be 4 numbers" });
+    await q("UPDATE agents SET pin_hash = ? WHERE agent_name = ?", [hashSecret(pin), name]);
+    misses.delete(name.toLowerCase());
+  } else {
+    return res.status(400).json({ success: false, message: "Unknown action" });
+  }
+  forgetAgent(target.agent_name);
+  console.log(`🎖️  Director ${req.agent.name}: ${action} ${target.agent_name}`);
+  res.json({ success: true });
+}));
+
+// ---------------------------------------------------------
+// Start (HTTP + WebSocket on the same port)
+// ---------------------------------------------------------
+const server = http.createServer(app);
+
+upgradeDatabase()
+  .then(() => console.log("✅ Connected to MySQL Database"))
+  .catch((err) => console.error("❌ Database setup problem:", err.message))
+  .finally(() => {
+    server.listen(config.PORT, () => console.log(`🚀 Server running at http://localhost:${config.PORT}`));
+  });
+
+// ===========================
+// WebSocket: live updates + video call signaling
+// Who you are comes from your login cookie, never from the message.
+// ===========================
+const wss = new WebSocket.Server({ server });
+const clients = new Map(); // normalized agent name -> Set of open connections (tablet + PC)
+const norm = (s) => String(s || "").trim().toLowerCase();
+
+function safeSend(ws, obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+function notifyAgent(agent, obj) {
+  for (const ws of clients.get(norm(agent)) || []) safeSend(ws, obj);
+}
+function broadcast(obj) {
+  for (const set of clients.values()) for (const ws of set) safeSend(ws, obj);
+}
+function notifyDirectors(obj) {
+  for (const set of clients.values()) for (const ws of set) if (ws.isDirector) safeSend(ws, obj);
+}
+
+wss.on("connection", async (ws, req) => {
+  let agent = null;
+  try {
+    agent = await agentFromRequest(req);
+  } catch {}
+  if (!agent) {
+    safeSend(ws, { type: "auth-required" });
+    return ws.close();
+  }
+  const key = norm(agent.name);
+  ws.isDirector = agent.isDirector;
+  if (!clients.has(key)) clients.set(key, new Set());
+  clients.get(key).add(ws);
+  safeSend(ws, { type: "registered", agent: agent.name });
+
+  ws.on("message", (raw) => {
+    let msg;
+    try { msg = JSON.parse(raw.toString()); } catch { return; }
+    if (msg.type === "register") return; // identity already known from the cookie
+
+    // Route call signaling to the target agent, stamped with the REAL sender
+    const to = norm(msg.to);
+    if (!to) return;
+    const targets = clients.get(to);
+    if (targets && targets.size) {
+      for (const t of targets) safeSend(t, { ...msg, to, from: key });
+    } else {
+      safeSend(ws, { type: "target-offline", to });
+    }
+  });
+
+  ws.on("close", () => {
+    const set = clients.get(key);
+    if (!set) return;
+    set.delete(ws);
+    if (!set.size) clients.delete(key);
+  });
+});

@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Phantom Black Ops Agency - Dossier</title>
+  <link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Share+Tech+Mono&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body class="dossier-page">
+
+  <!-- ✅ Logged-in agent + log out -->
+  <div class="top-bar">
+    <div id="agent-welcome" class="welcome-text"></div>
+    <button id="btn-logout" class="logout-btn" type="button">Log out</button>
+  </div>
+
+  <!-- ✅ Classified Stamp -->
+  <img id="classified-stamp" src="assets/classified.png" alt="Classified">
+
+  <div id="dossier-screen">
+    <div class="folder-header">
+      <h1>TOP SECRET DOSSIER</h1>
+      <p>Clearance: LEVEL 5 – Eyes Only</p>
+    </div>
+
+    <!-- ✅ Mission Options -->
+    <div class="mission-options">
+      <button class="dossier-btn" id="toggle-message-form">📤 Send Encrypted Message</button>
+      <button class="dossier-btn" id="btn-locate">📍 Locate Agent</button>
+      <button class="dossier-btn" id="btn-video-call">🎥 Video Call Another Agent</button>
+      <button class="dossier-btn">📝 Leave a Message</button>
+      <button class="dossier-btn" id="btn-inbox">📥 View Inbox <span id="inbox-badge" class="badge" hidden></span></button>
+      <button class="dossier-btn director-btn" id="btn-director" hidden>🎖️ Director Console <span id="director-badge" class="badge" hidden></span></button>
+
+
+    </div>
+
+    <!-- Are we sharing our location? (tap to retry if blocked) -->
+    <button id="geo-status" class="geo-status" type="button"></button>
+
+  </div>
+
+  <!-- ✅ Locate Agent: full-screen tracking map -->
+  <div id="locate" class="locate" hidden>
+    <div id="locate-map"></div>
+    <div class="locate-hud">
+      <header class="locate-top">
+        <div class="locate-title">📍 LOCATE AGENT</div>
+        <button id="locate-close" class="comms-btn" type="button">✕ Close</button>
+      </header>
+
+      <div id="locate-scan" class="locate-scan" hidden>
+        <div class="radar"><div class="radar-sweep"></div></div>
+        <div id="locate-scan-text" class="scan-text">ACQUIRING SIGNAL...</div>
+      </div>
+
+      <div class="locate-bottom">
+        <div id="locate-card" class="locate-card" hidden></div>
+        <div id="locate-agents" class="locate-agents"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ✅ Director Console: approve new agents, reset PINs -->
+  <div id="director" class="comms" hidden>
+    <div class="comms-card">
+      <section class="comms-view">
+        <header class="comms-header">
+          <h2 class="comms-title">🎖️ Director Console</h2>
+          <button id="director-close" class="comms-btn" type="button">✕ Close</button>
+        </header>
+        <div id="director-list" class="comms-scroll"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ✅ Secure Comms: chats grouped by agent -->
+  <div id="comms" class="comms" hidden>
+    <div class="comms-card">
+
+      <!-- View 1: list of chats (one per agent) -->
+      <section id="comms-list-view" class="comms-view">
+        <header class="comms-header">
+          <h2 class="comms-title">📥 Secure Comms</h2>
+          <button id="comms-close" class="comms-btn" type="button">✕ Close</button>
+        </header>
+        <button id="comms-new" class="comms-new" type="button">＋ New Message</button>
+        <div id="comms-list" class="comms-scroll"></div>
+      </section>
+
+      <!-- View 2: one chat thread -->
+      <section id="comms-thread-view" class="comms-view" hidden>
+        <header class="comms-header">
+          <button id="thread-back" class="comms-btn" type="button">◀ Chats</button>
+          <div id="thread-title" class="comms-title"></div>
+          <button id="thread-call" class="comms-btn" type="button" title="Video call">🎥</button>
+        </header>
+        <div id="thread-messages" class="comms-scroll thread-scroll"></div>
+
+        <!-- Quick messages: category tabs + big tap-to-fill buttons -->
+        <div id="quick-panel" class="quick-panel">
+          <div id="quick-tabs" class="quick-tabs" role="tablist"></div>
+          <div id="quick-grid" class="quick-grid"></div>
+        </div>
+
+        <!-- Suggestions that match what's being typed -->
+        <div id="quick-suggest" class="quick-suggest" hidden></div>
+
+        <form id="thread-form" class="thread-compose" autocomplete="off">
+          <button id="quick-toggle" class="quick-toggle" type="button" title="Show/hide quick messages">⚡</button>
+          <textarea id="thread-input" rows="2" placeholder="Tap a message above, or type..."></textarea>
+          <button id="thread-send" class="thread-send" type="submit">SEND ▶</button>
+        </form>
+      </section>
+
+    </div>
+  </div>
+
+
+
+
+<!-- ✅ Video Call Panel (v1 UI) -->
+<!-- ✅ Video Call Panel -->
+<div id="call-panel" style="display:none; position:fixed; left:12px; right:12px; top:12px; bottom:12px; z-index:10000; background:black; color:#0f0; border:2px solid #0f0; border-radius:14px; padding:12px;">
+  <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+    <div style="font-family:monospace; font-size:18px;">🎥 Secure Video Link</div>
+    <button id="btn-call-close" class="dossier-btn">Close</button>
+  </div>
+
+  <div style="margin-top:12px; display:grid; grid-template-columns:1fr; gap:12px;">
+    <video id="localVideo" autoplay playsinline muted style="width:100%; max-height:32vh; background:#020; border:1px solid rgba(0,255,0,0.35); border-radius:12px;"></video>
+    <video id="remoteVideo" autoplay playsinline style="width:100%; max-height:32vh; background:#020; border:1px solid rgba(0,255,0,0.35); border-radius:12px;"></video>
+  </div>
+
+  <div style="margin-top:12px; display:flex; gap:12px; flex-wrap:wrap;">
+    <button id="btn-call-start" class="dossier-btn">Start Call</button>
+
+<!-- ✅ Incoming call controls (hidden unless ringing) -->
+<button id="btn-call-accept" class="dossier-btn" style="display:none;">Accept</button>
+<button id="btn-call-decline" class="dossier-btn" style="display:none;">Decline</button>
+
+<button id="btn-call-hangup" class="dossier-btn">Hang Up</button>
+
+  </div>
+
+  <div id="call-status" style="margin-top:10px; font-family:monospace;"></div>
+</div>
+
+
+<!-- ✅ Agent Picker Overlay (single-choice buttons) -->
+<div id="agent-picker" style="display:none;">
+  <div id="agent-picker-card">
+    <div id="agent-picker-header">
+      <div id="agent-picker-title">Select Agent</div>
+      <button id="agent-picker-close" class="dossier-btn" type="button">Close</button>
+    </div>
+
+    <div id="agent-picker-body">
+      <div id="agent-picker-status" style="margin-bottom:10px; font-family:monospace;"></div>
+      <div id="agent-picker-list"></div>
+    </div>
+  </div>
+</div>
+
+
+
+
+
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script src="quick-messages.js"></script>
+  <script src="script.js"></script>
+
+</body>
+
+</html>

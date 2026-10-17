@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Henry's IMF</title>
+  <link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="intro-page">
+  <audio id="mi-audio" src="assets/mi-theme.mp3" preload="auto"></audio>
+  <video id="fire-video" class="fire-layer" src="assets/fire.webm" muted playsinline preload="auto"></video>
+  <video id="smoke-video" class="smoke-layer" src="assets/smoke.webm" muted playsinline preload="auto"></video>
+  <canvas id="shatter-canvas"></canvas>
+
+  <div id="start-screen">
+    <div id="terminal-wrapper">
+      <div id="terminal-box">
+        <div id="typed-text"></div>
+      </div>
+      <button id="start-button" type="button">Start Mission</button>
+    </div>
+  </div>
+
+  <button id="skip-intro" type="button">Skip &#9654;&#9654;</button>
+
+  <div id="background"></div>
+  <div id="login-container">
+    <h1>Henry's IMF</h1>
+
+    <!-- Already logged in on this device -->
+    <section id="login-welcome" class="login-step" hidden>
+      <div class="login-who"><span id="welcome-avatar"></span><span id="welcome-name" class="login-name"></span></div>
+      <button id="btn-enter-hq" class="big-go" type="button">ENTER HQ ▶</button>
+      <button id="btn-switch-agent" class="link-btn" type="button">Not you? Switch agent</button>
+    </section>
+
+    <!-- Pick your face -->
+    <section id="login-pick" class="login-step" hidden>
+      <p class="login-prompt">WHO'S REPORTING FOR DUTY?</p>
+      <div id="agent-tiles" class="agent-tiles"></div>
+    </section>
+
+    <!-- Type code name (first time on this device) -->
+    <section id="login-name" class="login-step" hidden>
+      <p class="login-prompt">ENTER YOUR CODE NAME</p>
+      <input type="text" id="login-agent-name" class="login-input" placeholder="Code name" autocomplete="username" autocapitalize="words" />
+      <div class="login-row">
+        <button class="link-btn" data-back type="button">◀ Back</button>
+        <button id="btn-name-next" class="big-go" type="button">NEXT ▶</button>
+      </div>
+    </section>
+
+    <!-- 4-digit PIN -->
+    <section id="login-pin" class="login-step" hidden>
+      <div class="login-who"><span id="pin-avatar"></span><span id="pin-name" class="login-name"></span></div>
+      <p id="pin-prompt" class="login-prompt">ENTER YOUR PIN</p>
+      <div id="pin-dots" class="pin-dots"><i></i><i></i><i></i><i></i></div>
+      <div id="pin-pad" class="pin-pad"></div>
+      <p id="pin-error" class="login-error" aria-live="polite"></p>
+      <button class="link-btn" data-back type="button">◀ Back</button>
+    </section>
+
+    <!-- Password (Director, or an old account's first login) -->
+    <section id="login-password" class="login-step" hidden>
+      <div class="login-who"><span id="pw-avatar"></span><span id="pw-name" class="login-name"></span></div>
+      <p id="pw-prompt" class="login-prompt">ENTER YOUR PASSWORD</p>
+      <form id="login-form">
+        <input type="password" id="login-password-input" class="login-input" placeholder="Password" autocomplete="current-password" />
+        <p id="pw-error" class="login-error" aria-live="polite"></p>
+        <div class="login-row">
+          <button class="link-btn" data-back type="button">◀ Back</button>
+          <button class="big-go" type="submit">LOGIN ▶</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Ask to join -->
+    <section id="login-signup" class="login-step" hidden>
+      <p class="login-prompt">REQUEST TO JOIN</p>
+      <input type="text" id="agent-name" class="login-input" placeholder="Pick a code name" maxlength="30" />
+      <input type="password" id="agent-pin" class="login-input" placeholder="Pick a 4-number PIN" inputmode="numeric" maxlength="4" autocomplete="new-password" />
+      <input type="password" id="agent-pin2" class="login-input" placeholder="Type the PIN again" inputmode="numeric" maxlength="4" autocomplete="new-password" />
+      <input type="email" id="agent-email" class="login-input" placeholder="Parent's email (optional)" />
+      <textarea id="agent-bio" class="login-input" placeholder="Agent bio (optional)" rows="2"></textarea>
+      <p id="signup-msg" class="login-error" aria-live="polite"></p>
+      <div class="login-row">
+        <button class="link-btn" data-back type="button">◀ Back</button>
+        <button id="register-agent" class="big-go" type="button">SEND ▶</button>
+      </div>
+    </section>
+
+    <button id="create-agent-toggle" class="alt-button" type="button">New agent? Request to join</button>
+
+    <div id="smoke-wrapper">
+      <div class="smoke" style="top: 0%; left: 0%; animation-delay: 0s;"></div>
+      <div class="smoke" style="top: 0%; left: 50%; animation-delay: 0.5s;"></div>
+      <div class="smoke" style="top: 0%; right: 0%; animation-delay: 1s;"></div>
+      <div class="smoke" style="bottom: 0%; left: 25%; animation-delay: 0.25s;"></div>
+      <div class="smoke" style="bottom: 0%; right: 25%; animation-delay: 0.75s;"></div>
+      <div class="smoke" style="top: 50%; left: -5%; animation-delay: 1.25s;"></div>
+      <div class="smoke" style="top: 50%; right: -5%; animation-delay: 1.5s;"></div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

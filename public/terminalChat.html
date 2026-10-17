@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Agent Chat</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    body {
+      background-color: black;
+      color: #0f0;
+      font-family: 'Share Tech Mono', monospace;
+    }
+    #chat-box {
+      border: 2px solid #0f0;
+      padding: 1em;
+      max-width: 600px;
+      margin: 2em auto;
+      background-color: #111;
+    }
+    #messages {
+      height: 300px;
+      overflow-y: auto;
+      margin-bottom: 1em;
+      border: 1px solid #0f0;
+      padding: 0.5em;
+    }
+    #message-input {
+      width: 100%;
+      padding: 0.5em;
+      background: black;
+      color: #0f0;
+      border: 1px solid #0f0;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat-box">
+    <h2>Agent Communication Terminal</h2>
+    <div id="messages"></div>
+    <input type="text" id="message-input" placeholder="Type your message..." />
+  </div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="chat.js"></script>
+</body>
+</html>

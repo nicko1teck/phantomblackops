@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Henry's IMF</title>
+  <link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background-color: black;
+      font-family: 'Black Ops One', 'Courier New', monospace;
+      overflow: hidden;
+    }
+
+    #start-screen {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: black;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      z-index: 5;
+    }
+
+    #terminal-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    #terminal-box {
+      width: 60vw;
+      max-width: 700px;
+      height: 25vh;
+      background: rgba(0, 255, 0, 0.1);
+      border: 2px solid #0f0;
+      color: #0f0;
+      font-family: 'Share Tech Mono', monospace;
+      padding: 30px;
+      font-size: 1.2em;
+      box-shadow: 0 0 20px #0f0;
+      white-space: pre-wrap;
+      position: relative;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: start;
+      animation: glowPulse 2s infinite;
+    }
+
+    @keyframes glowPulse {
+      0% { box-shadow: 0 0 5px #0f0; }
+      50% { box-shadow: 0 0 20px #0f0; }
+      100% { box-shadow: 0 0 5px #0f0; }
+    }
+
+    #typed-text::after {
+      content: '';
+      display: inline-block;
+      width: 10px;
+      height: 1.2em;
+      background-color: #0f0;
+      margin-left: 5px;
+      animation: blink 0.9s infinite;
+      vertical-align: bottom;
+    }
+
+    @keyframes blink {
+      0%, 50% { opacity: 1; }
+      51%, 100% { opacity: 0; }
+    }
+
+    canvas#shatter-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 9;
+      pointer-events: none;
+    }
+
+    video.fire-layer, video.smoke-layer {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 80vw;
+      height: auto;
+      z-index: 8;
+      pointer-events: none;
+      display: none;
+    }
+
+    #background, #login-container {
+      opacity: 0;
+      transition: opacity 11s ease;
+    }
+
+    #background {
+      position: absolute;
+      top: 0;
+      left: 0;
+      background: #4b5320 url("assets/camo.jpg") repeat;
+      background-size: cover;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+    }
+
+    #login-container {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.65);
+      padding: 40px;
+      border-radius: 12px;
+      text-align: center;
+      color: #fff;
+      box-shadow: 0 0 15px rgba(0, 0, 0, 0.8);
+      z-index: 1;
+      width: 320px;
+    }
+
+    #start-button {
+  margin-top: 30px;
+  padding: 40px 80px;
+  font-size: 1.5rem;
+  font-family: 'Share Tech Mono', monospace;
+  color: #ff3b3b;
+  background-color: black;
+  border: 4px solid #ff3b3b;
+  border-radius: 8px;
+  text-transform: uppercase;
+  box-shadow: 0 0 25px #ff3b3b;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+
+#start-button:hover {
+  background-color: #1a0000;
+  box-shadow: 0 0 40px #ff3b3b;
+}
+
+@keyframes fadeIn {
+  to {
+    opacity: 1;
+  }
+}
+
+
+#login-container::before,
+#login-container::after {
+  content: '';
+  position: absolute;
+  top: -20px;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  background: radial-gradient(rgba(255, 255, 255, 0.15), transparent);
+  border-radius: 50%;
+  transform: translateX(-50%) scale(1);
+  animation: smokeRise 4s infinite ease-in-out;
+  pointer-events: none;
+  z-index: 0;
+}
+
+#login-container::after {
+  animation-delay: 2s;
+}
+
+@keyframes smokeRise {
+  0% {
+    transform: translateX(-50%) translateY(0) scale(1);
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.2;
+  }
+  100% {
+    transform: translateX(-50%) translateY(-80px) scale(1.5);
+    opacity: 0;
+  }
+}
+
+#login-container {
+  position: relative; /* ensure smoke is positioned relative to it */
+  overflow: visible;
+}
+
+.smoke-puff {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  background: radial-gradient(rgba(255, 255, 255, 0.6), transparent);
+  border-radius: 60% 40% 55% 45% / 50% 60% 40% 50%;
+  pointer-events: none;
+  animation: perimeterSmoke 6s infinite ease-in-out;
+  filter: blur(3px);
+  z-index: 2;
+  opacity: 0.6;
+}
+
+@keyframes perimeterSmoke {
+  0% {
+    transform: translate(0, 0) scale(1) rotate(0deg);
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 0.4;
+  }
+  100% {
+    transform: translate(0, -80px) scale(1.5) rotate(60deg);
+    opacity: 0;
+  }
+}
+
+
+  </style>
+</head>
+<body>
+  <audio id="mi-audio" src="assets/mi-theme.mp3" preload="auto"></audio>
+  <video id="fire-video" class="fire-layer" src="assets/fire.webm" muted playsinline></video>
+  <video id="smoke-video" class="smoke-layer" src="assets/smoke.webm" muted playsinline></video>
+  <canvas id="shatter-canvas"></canvas>
+
+  <div id="start-screen">
+    <div id="terminal-wrapper">
+      <div id="terminal-box">
+        <div id="typed-text"></div>
+      </div>
+      <button id="start-button">Start Mission</button>
+    </div>
+  </div>
+
+  <div id="background"></div>
+  <div id="login-container">
+    <h1>Henry's IMF</h1>
+    <form>
+      <input type="text" placeholder="Username" required /><br />
+      <input type="password" placeholder="Password" required /><br />
+      <input type="submit" value="Login" />
+    </form>
+
+<!-- Top Edge -->
+<div class="smoke-puff" style="top: -10px; left: 10%; animation-delay: 0s;"></div>
+<div class="smoke-puff" style="top: -10px; left: 30%; animation-delay: 1s;"></div>
+<div class="smoke-puff" style="top: -10px; left: 50%; animation-delay: 2s;"></div>
+<div class="smoke-puff" style="top: -10px; left: 70%; animation-delay: 3s;"></div>
+
+<!-- Bottom Edge -->
+<div class="smoke-puff" style="bottom: -10px; left: 20%; animation-delay: 0.5s;"></div>
+<div class="smoke-puff" style="bottom: -10px; left: 60%; animation-delay: 1.5s;"></div>
+
+<!-- Left Side -->
+<div class="smoke-puff" style="top: 10%; left: -10px; animation-delay: 2.5s;"></div>
+<div class="smoke-puff" style="top: 50%; left: -10px; animation-delay: 3.5s;"></div>
+
+<!-- Right Side -->
+<div class="smoke-puff" style="top: 25%; right: -10px; animation-delay: 1s;"></div>
+<div class="smoke-puff" style="top: 65%; right: -10px; animation-delay: 2s;"></div>
+
+<!-- Random Center Edge Transitions -->
+<div class="smoke-puff" style="top: 0; left: 85%; animation-delay: 4s;"></div>
+<div class="smoke-puff" style="bottom: 0; left: 40%; animation-delay: 3.8s;"></div>
+
+  </div>
+
+  <script>
+    const text = "Hello Henry, your mission, should you choose to accept it, is ready...";
+    const typedText = document.getElementById("typed-text");
+    const startButton = document.getElementById("start-button");
+    const terminalBox = document.getElementById("terminal-box");
+    const fireVideo = document.getElementById("fire-video");
+    const smokeVideo = document.getElementById("smoke-video");
+    const startScreen = document.getElementById("start-screen");
+    const background = document.getElementById("background");
+    const loginContainer = document.getElementById("login-container");
+    const themeAudio = document.getElementById("mi-audio");
+    const canvas = document.getElementById("shatter-canvas");
+    const ctx = canvas.getContext("2d");
+    let fragments = [];
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
+
+   function typeText(i = 0) {
+  if (i < text.length) {
+    typedText.textContent += text.charAt(i);
+    setTimeout(() => typeText(i + 1), 135);
+  } else {
+    setTimeout(() => {
+      startButton.style.opacity = 1;
+    }, 400); // small delay after typing completes
+  }
+}
+
+    class Fragment {
+      constructor(image, x, y, dx, dy, scale, rotationSpeed) {
+        this.image = image;
+        this.x = x;
+        this.y = y;
+        this.dx = dx;
+        this.dy = dy;
+        this.scale = 1;
+        this.scaleRate = scale;
+        this.alpha = 1;
+        this.rotation = 0;
+        this.rotationSpeed = rotationSpeed;
+      }
+
+      update() {
+        this.x += this.dx;
+        this.y += this.dy;
+        this.scale += this.scaleRate;
+        this.alpha -= 0.015;
+        this.rotation += this.rotationSpeed;
+      }
+
+      draw(ctx) {
+        if (this.alpha <= 0) return;
+        ctx.save();
+        ctx.globalAlpha = this.alpha;
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.rotation);
+        ctx.scale(this.scale, this.scale);
+        ctx.drawImage(this.image, -this.image.width/2, -this.image.height/2);
+        ctx.strokeStyle = "#0f0";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(-this.image.width/2, -this.image.height/2, this.image.width, this.image.height);
+        ctx.restore();
+      }
+    }
+
+    function explode(img) {
+      const pieceSize = 40;
+      for (let y = 0; y < img.height; y += pieceSize) {
+        for (let x = 0; x < img.width; x += pieceSize) {
+          const pieceCanvas = document.createElement('canvas');
+          pieceCanvas.width = pieceSize;
+          pieceCanvas.height = pieceSize;
+          const pieceCtx = pieceCanvas.getContext('2d');
+          pieceCtx.fillStyle = "black";
+          pieceCtx.fillRect(0, 0, pieceSize, pieceSize);
+          pieceCtx.drawImage(img, x, y, pieceSize, pieceSize, 0, 0, pieceSize, pieceSize);
+
+          const startX = window.innerWidth / 2 + x - img.width / 2;
+          const startY = window.innerHeight / 2 + y - img.height / 2;
+          const angle = Math.random() * Math.PI * 2;
+          const speed = Math.random() * 10 + 5;
+          const rotationSpeed = (Math.random() - 0.5) * 0.2;
+          fragments.push(new Fragment(
+            pieceCanvas,
+            startX,
+            startY,
+            Math.cos(angle) * speed,
+            Math.sin(angle) * speed,
+            0.1 + Math.random() * 0.1,
+            rotationSpeed
+          ));
+        }
+      }
+      animateFragments();
+    }
+
+    function animateFragments() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      fragments.forEach(f => {
+        f.update();
+        f.draw(ctx);
+      });
+      fragments = fragments.filter(f => f.alpha > 0);
+      if (fragments.length > 0) requestAnimationFrame(animateFragments);
+    }
+
+    function applyScreenShake(duration = 500, intensity = 5) {
+      const originalStyle = document.body.style.cssText;
+      let elapsed = 0;
+      const interval = 16;
+      const shake = setInterval(() => {
+        elapsed += interval;
+        const x = (Math.random() - 0.5) * intensity;
+        const y = (Math.random() - 0.5) * intensity;
+        document.body.style.transform = `translate(${x}px, ${y}px)`;
+        if (elapsed >= duration) {
+          clearInterval(shake);
+          document.body.style.transform = '';
+        }
+      }, interval);
+    }
+
+    typeText();
+
+    startButton.addEventListener("click", () => {
+      html2canvas(terminalBox).then(canvasImage => {
+        const img = new Image();
+        img.onload = () => {
+          explode(img);
+          applyScreenShake();
+        };
+        img.src = canvasImage.toDataURL();
+        terminalBox.style.display = "none";
+        startButton.style.display = "none";
+
+        setTimeout(() => {
+          fireVideo.currentTime = 0;
+          fireVideo.style.display = "block";
+          fireVideo.play();
+
+          smokeVideo.currentTime = 0;
+          smokeVideo.style.display = "block";
+          smokeVideo.load();
+          smokeVideo.play();
+        }, 150);
+
+        themeAudio.play().catch(() => {});
+
+        setTimeout(() => {
+          startScreen.style.display = "none";
+          background.style.opacity = 1;
+          loginContainer.style.opacity = 1;
+        }, 3000);
+      });
+    });
+  </script>
+</body>
+</html>
