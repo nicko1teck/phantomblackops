@@ -1,0 +1,80 @@
+# Phantom Black Ops - continuous delivery to EC2
+# Every push to master: check the code, copy it to the server, install, restart.
+#
+# GitHub repo -> Settings -> Secrets and variables -> Actions -> New repository secret:
+#   EC2_HOST     public IP or DNS name of the EC2 instance
+#   EC2_USER     SSH user (ubuntu on Ubuntu, ec2-user on Amazon Linux)
+#   EC2_SSH_KEY  the full contents of the .pem private key file
+# Optional repository VARIABLE (same page, "Variables" tab):
+#   APP_DIR      folder on the server (default: /home/<EC2_USER>/phantomblackops)
+
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch: # also allows a manual "Run workflow" button
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  deploy:
+    name: Deploy
+    needs: check
+    runs-on: ubuntu-latest
+    env:
+      APP_DIR: ${{ vars.APP_DIR != '' && vars.APP_DIR || format('/home/{0}/phantomblackops', secrets.EC2_USER) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Copy files to server
+        # .env and node_modules on the server are left alone
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "mkdir -p '$APP_DIR'"
+          rsync -az --delete \
+            --exclude '.git' --exclude '.github' --exclude 'node_modules' --exclude '.env' \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            ./ ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:"$APP_DIR"/
+
+      - name: Install and restart
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "bash -s" <<EOF_REMOTE
+            set -e
+            cd '$APP_DIR'
+            npm ci --omit=dev
+            if pm2 describe phantomblackops > /dev/null 2>&1; then
+              pm2 reload phantomblackops --update-env
+            else
+              pm2 start server.js --name phantomblackops
+            fi
+            pm2 save
+          EOF_REMOTE
+
+      - name: Health check
+        run: |
+          sleep 4
+          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "bash -s" <<EOF_REMOTE
+            PORT=\$(grep -E '^PORT=' '$APP_DIR/.env' | cut -d= -f2 | tr -d '\r')
+            curl -fsS -o /dev/null -w 'App answered: HTTP %{http_code}\n' "http://127.0.0.1:\${PORT:-3000}/"
+          EOF_REMOTE
