@@ -1390,3 +1390,6 @@ textarea.login-input { min-height: 0; resize: none; }
 .dir-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .dir-actions .card-btn { flex: 0 0 auto; padding: 0 18px; }
 .dir-note { opacity: 0.7; }
+
+/* OpenStreetMap tiles, darkened to match the spy theme */
+.leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9); }

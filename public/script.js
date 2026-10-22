@@ -1107,10 +1107,10 @@ if (IS_DOSSIER) {
     function ensureMap() {
       if (map || typeof L === "undefined") return map;
       map = L.map("locate-map", { zoomControl: false, worldCopyJump: true }).setView([39.5, -98.35], 4);
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
         subdomains: "abcd",
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       }).addTo(map);
       return map;
     }
