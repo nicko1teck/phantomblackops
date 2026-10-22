@@ -3,7 +3,8 @@
    - Guards index-only code from running on dossier
    - Guards dossier-only code from running on index
    - Secure Comms: chats grouped by agent, unread badges, live updates
-   - Locate Agent: shares location while open, radar-scan map
+   - Locate Agent: shares location while open, radar-scan map, lookups logged
+   - Sessions: 10-minute idle logout
    - Agent picker (no typing)
    - ONE video-call implementation with Incoming Call + Accept/Decline
    ========================================================= */
@@ -73,11 +74,13 @@ if (IS_INDEX) {
   const shatterCanvas = el("shatter-canvas");
   const shatterCtx = shatterCanvas ? shatterCanvas.getContext("2d") : null;
 
-  const text = "Hello Henry, your mission, should you choose to accept it, is ready...";
+  // The briefing is personal: it greets whoever just logged in
+  let text = "";
   let fragments = [];
   let typingTimer = null;
   let revealTimer = null;
   let introDone = false;
+  let briefingActive = false;
   let missionStarted = false;
 
   function resizeShatterCanvas() {
@@ -229,7 +232,7 @@ if (IS_INDEX) {
     animateFragments();
   }
 
-  // --- Step 3: fire, smoke, music, then the login fades in ---
+  // --- Step 3: fire, smoke, music, then into HQ ---
   function playVideo(v) {
     if (!v) return;
     v.classList.add("is-playing");
@@ -238,15 +241,37 @@ if (IS_INDEX) {
     v.onended = () => v.classList.remove("is-playing");
   }
 
-  function revealLogin(instant = false) {
+  // The login screen comes FIRST now; the cinematic plays after a successful login
+  function showLogin() {
+    briefingActive = false;
+    startScreen?.classList.add("is-gone");
+    skipButton?.classList.add("is-gone");
+    background?.classList.add("is-visible");
+    loginContainer?.classList.remove("is-gone");
+    loginContainer?.classList.add("is-visible");
+  }
+
+  // Logged in: "Hello Agent <name>, your mission..."
+  function startBriefing(name) {
+    text = `Hello Agent ${name}, your mission, should you choose to accept it, is ready...`;
+    clearTimeout(typingTimer);
+    if (typedText) typedText.textContent = "";
+    startButton?.classList.remove("is-ready");
+    const sw = el("btn-switch-agent");
+    if (sw) sw.textContent = `Not Agent ${name}? Switch agent`;
+    loginContainer?.classList.add("is-gone");
+    startScreen?.classList.remove("is-gone", "is-clear");
+    skipButton?.classList.remove("is-gone");
+    briefingActive = true;
+    typeText();
+  }
+
+  // Into the dossier, with a quick fade to black
+  function goToHQ() {
     if (introDone) return;
     introDone = true;
-    document.body.classList.add("intro-finished");
-    if (instant) document.body.classList.add("intro-skipped");
-    startScreen?.classList.add("is-gone");
-    background?.classList.add("is-visible");
-    loginContainer?.classList.add("is-visible");
-    skipButton?.classList.add("is-gone");
+    el("fade-out")?.classList.add("is-on");
+    setTimeout(() => (window.location.href = "dossier.html"), 700);
   }
 
   function startMission() {
@@ -258,6 +283,8 @@ if (IS_INDEX) {
     const snap = snapshotTerminal();
     terminalBox.style.visibility = "hidden";
     if (startButton) startButton.style.visibility = "hidden";
+    const sw = el("btn-switch-agent");
+    if (sw) sw.style.visibility = "hidden";
     startScreen?.classList.add("is-clear");
     explode(snap);
 
@@ -267,7 +294,7 @@ if (IS_INDEX) {
       themeAudio?.play?.().catch(() => {});
     }, 150);
 
-    revealTimer = setTimeout(() => revealLogin(false), 3000);
+    revealTimer = setTimeout(goToHQ, 6000);
   }
 
   function skipIntro() {
@@ -280,13 +307,13 @@ if (IS_INDEX) {
       v.pause();
       v.classList.remove("is-playing");
     });
-    revealLogin(true);
+    goToHQ();
   }
 
   startButton?.addEventListener("click", startMission);
   skipButton?.addEventListener("click", skipIntro);
   document.addEventListener("keydown", (e) => {
-    if (introDone) return;
+    if (introDone || !briefingActive) return;
     if (e.key === "Escape") skipIntro();
     else if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
@@ -294,8 +321,6 @@ if (IS_INDEX) {
       else terminalBox?.click();
     }
   });
-
-  typeText();
 
   // Back/forward button: Chrome restores the finished page from memory.
   // Reload instead so the cinematic plays again.
@@ -313,7 +338,7 @@ if (IS_INDEX) {
     try { localStorage.setItem(KNOWN_KEY, JSON.stringify(list)); } catch {}
   }
 
-  const steps = ["login-welcome", "login-pick", "login-name", "login-pin", "login-password", "login-signup"];
+  const steps = ["login-pick", "login-name", "login-pin", "login-password", "login-signup"];
   let stepHistory = [];
   function showStep(id, { push = true } = {}) {
     const current = steps.find((s) => !el(s).hidden);
@@ -481,18 +506,20 @@ if (IS_INDEX) {
     drawDots("good");
     setTimeout(enterHQ, 300);
   }
+  // Login done -> the personal briefing
   function enterHQ() {
-    window.location.href = "dossier.html";
+    startBriefing(loginName);
   }
 
-  // ---- Already logged in? ----
-  el("btn-enter-hq").addEventListener("click", enterHQ);
+  // "Not Agent X? Switch agent" under the briefing
   el("btn-switch-agent").addEventListener("click", async () => {
     try { await post("/api/logout"); } catch {}
     sessionStorage.removeItem("agent_name");
+    clearTimeout(typingTimer);
     renderTiles();
     stepHistory = [];
     showStep("login-pick", { push: false });
+    showLogin();
   });
 
   // ---- Request to join ----
@@ -523,22 +550,21 @@ if (IS_INDEX) {
     }
   });
 
-  // First screen after the intro
+  // First screen: the login (unless this browser is still in an active session)
   async function setupLogin() {
     renderTiles();
+    const known = knownAgents();
+    showStep(known.length ? "login-pick" : "login-name", { push: false });
     try {
       const res = await fetch("/api/me", { headers: { Accept: "application/json" } });
       if (res.ok) {
         const data = await res.json();
-        const name = data.agent.agent_name;
-        rememberAgent(name);
-        el("welcome-avatar").innerHTML = imfAvatar(name);
-        el("welcome-name").textContent = `Agent ${name}`;
-        return showStep("login-welcome", { push: false });
+        loginName = data.agent.agent_name;
+        rememberAgent(loginName);
+        return startBriefing(loginName);
       }
     } catch {}
-    const known = knownAgents();
-    showStep(known.length ? "login-pick" : "login-name", { push: false });
+    showLogin();
   }
   setupLogin();
 }
@@ -561,6 +587,34 @@ if (IS_DOSSIER) {
     const me = meInfo.agent_name;
     sessionStorage.setItem("agent_name", me);
     el("agent-welcome").textContent = `Welcome, Agent ${me}`;
+
+    // =====================================================
+    // SESSION: back to the PIN screen after 10 minutes without a tap/keypress,
+    // when the server says the login has ended, or on Log out.
+    // (The server enforces the same 10 minutes, plus a 12-hour limit.)
+    // =====================================================
+    const IDLE_MS = (meInfo.session?.idleMinutes || 10) * 60 * 1000;
+    let lastActivity = Date.now();
+    let leaving = false;
+    function sessionEnded() {
+      if (leaving) return;
+      leaving = true;
+      sessionStorage.removeItem("agent_name");
+      fetch("/api/logout", { method: "POST" }).catch(() => {}).finally(() => {
+        window.location.href = "index.html";
+      });
+    }
+    function markActive() {
+      if (Date.now() - lastActivity > IDLE_MS) return sessionEnded();
+      lastActivity = Date.now();
+    }
+    ["pointerdown", "keydown", "touchstart", "wheel"].forEach((evt) =>
+      window.addEventListener(evt, markActive, { passive: true, capture: true }));
+    // Check every 15s, and right away when a phone/tablet wakes the page back up
+    setInterval(() => { if (Date.now() - lastActivity > IDLE_MS) sessionEnded(); }, 15000);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && Date.now() - lastActivity > IDLE_MS) sessionEnded();
+    });
 
     // =====================================================
     // Agent Picker (no typing, touch-friendly)
@@ -674,9 +728,17 @@ if (IS_DOSSIER) {
       new ResizeObserver(() => { if (stickToBottom) scrollThreadToBottom(); }).observe(threadMessages);
     }
 
-    const api = (path, opts) =>
-      fetch(path, { headers: { Accept: "application/json", "Content-Type": "application/json" }, ...opts })
-        .then((r) => r.json());
+    // Talk to the server. { background: true } marks automatic requests
+    // (polling, location updates) so they DON'T count as activity for the idle logout.
+    const api = (path, opts = {}) => {
+      const { background, ...rest } = opts;
+      const headers = { Accept: "application/json", "Content-Type": "application/json" };
+      if (background) headers["X-IMF-Background"] = "1";
+      return fetch(path, { headers, ...rest }).then((r) => {
+        if (r.status === 401) sessionEnded();
+        return r.json();
+      });
+    };
 
     const avatar = imfAvatar;
 
@@ -715,11 +777,11 @@ if (IS_DOSSIER) {
     }
 
     // ---- List of chats ----
-    async function loadConversations() {
+    async function loadConversations({ background = false } = {}) {
       if (!me) return (commsList.innerHTML = `<em>Not logged in.</em>`);
       if (!commsList.children.length) commsList.innerHTML = `<em>Loading chats...</em>`;
       try {
-        const data = await api("/api/conversations");
+        const data = await api("/api/conversations", { background });
         const convos = data.conversations || [];
         setBadge(convos.reduce((n, c) => n + c.unread, 0));
 
@@ -751,11 +813,11 @@ if (IS_DOSSIER) {
     });
 
     // ---- One chat thread ----
-    async function loadThread({ scroll = true } = {}) {
+    async function loadThread({ scroll = true, background = false } = {}) {
       if (!openChatWith) return;
       const other = openChatWith;
       try {
-        const data = await api(`/api/thread/${encodeURIComponent(other)}`);
+        const data = await api(`/api/thread/${encodeURIComponent(other)}`, { background });
         if (openChatWith !== other) return; // switched chats while loading
         const msgs = data.messages || [];
 
@@ -787,7 +849,7 @@ if (IS_DOSSIER) {
 
         // They've now been seen
         if (msgs.some((m) => !m.fromMe && !m.read_at)) {
-          api(`/api/thread/${encodeURIComponent(other)}/read`, { method: "POST" })
+          api(`/api/thread/${encodeURIComponent(other)}/read`, { method: "POST", background })
             .then(refreshBadge).catch(() => {});
         }
       } catch (err) {
@@ -1006,10 +1068,10 @@ if (IS_DOSSIER) {
       inboxBadge.hidden = !n;
       inboxBadge.textContent = n > 9 ? "9+" : String(n);
     }
-    async function refreshBadge() {
+    async function refreshBadge({ background = true } = {}) {
       if (!me) return;
       try {
-        const data = await api("/api/conversations");
+        const data = await api("/api/conversations", { background });
         setBadge((data.conversations || []).reduce((n, c) => n + c.unread, 0));
       } catch {}
     }
@@ -1018,13 +1080,13 @@ if (IS_DOSSIER) {
     // ---- Live updates: the server pings us when a message arrives ----
     window.addEventListener("imf:new-message", (e) => {
       const from = e.detail?.from;
-      if (openChatWith && norm(from) === norm(openChatWith)) loadThread();
-      else if (!comms.hidden && !listView.hidden) loadConversations();
+      if (openChatWith && norm(from) === norm(openChatWith)) loadThread({ background: true });
+      else if (!comms.hidden && !listView.hidden) loadConversations({ background: true });
       else refreshBadge();
     });
     // Backup in case the live connection drops: check every 20s
     setInterval(() => {
-      if (openChatWith) loadThread({ scroll: false });
+      if (openChatWith) loadThread({ scroll: false, background: true });
       else refreshBadge();
     }, 20000);
 
@@ -1038,7 +1100,6 @@ if (IS_DOSSIER) {
     const scanText = el("locate-scan-text");
     const locateCard = el("locate-card");
     const locateAgents = el("locate-agents");
-    const geoStatus = el("geo-status");
 
     const locations = new Map(); // norm(name) -> {agent_name, lat, lng, accuracy, updated_at}
     const pins = new Map();      // norm(name) -> Leaflet marker
@@ -1057,11 +1118,6 @@ if (IS_DOSSIER) {
 
     // ---- Share my location while the app is open ----
     let lastSent = null;
-    function setGeoStatus(text, state) {
-      if (!geoStatus) return;
-      geoStatus.textContent = text;
-      geoStatus.dataset.state = state;
-    }
     function distanceM(a, b) {
       const R = 6371000, toRad = (d) => (d * Math.PI) / 180;
       const dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
@@ -1076,32 +1132,49 @@ if (IS_DOSSIER) {
       lastSent = { ...here, t: now };
       api("/api/location", {
         method: "POST",
+        background: true,
         body: JSON.stringify({ ...here, accuracy: pos.coords.accuracy }),
-      }).then(() => setGeoStatus("📡 Sharing your location with agents", "on")).catch(() => {});
+      }).catch(() => {});
     }
     let watchId = null;
     function startSharing() {
-      if (!me) return;
-      if (!navigator.geolocation) return setGeoStatus("📡 This device can't share location", "off");
-      if (!window.isSecureContext) {
-        return setGeoStatus("📡 Location needs a secure (https) address — works on localhost or once online", "off");
-      }
+      if (!me || !navigator.geolocation || !window.isSecureContext) return;
       if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-      setGeoStatus("📡 Finding your location...", "wait");
-      watchId = navigator.geolocation.watchPosition(
-        sendLocation,
-        (err) => {
-          if (err.code === err.PERMISSION_DENIED) setGeoStatus("📡 Location blocked — tap here, then allow it", "off");
-          else setGeoStatus("📡 Can't find your location right now — tap to retry", "off");
-        },
-        { enableHighAccuracy: true, maximumAge: 15000, timeout: 30000 }
-      );
+      watchId = navigator.geolocation.watchPosition(sendLocation, () => {}, {
+        enableHighAccuracy: true, maximumAge: 15000, timeout: 30000,
+      });
     }
-    geoStatus?.addEventListener("click", () => {
-      lastSent = null;
-      startSharing();
-    });
-    startSharing();
+
+    // After login: if the browser hasn't been asked yet, explain first, then let
+    // the "Share my location" tap bring up the system permission prompt.
+    // Already allowed -> sharing starts silently. Blocked -> leave it be.
+    // (The browser remembers the answer, so logging out doesn't reset it.)
+    async function locationPermission() {
+      try {
+        const p = await navigator.permissions.query({ name: "geolocation" });
+        return p.state; // "granted" | "prompt" | "denied"
+      } catch {
+        return "unknown";
+      }
+    }
+    (async function askToShareLocation() {
+      if (!navigator.geolocation || !window.isSecureContext) return;
+      const state = await locationPermission();
+      if (state === "granted") return startSharing();
+      if (state === "denied") return;
+      let asked = false;
+      try { asked = sessionStorage.getItem("imf_geo_asked") === "1"; } catch {}
+      if (asked) return state === "unknown" ? startSharing() : undefined;
+
+      const dlg = el("geo-ask");
+      dlg.hidden = false;
+      const done = () => {
+        dlg.hidden = true;
+        try { sessionStorage.setItem("imf_geo_asked", "1"); } catch {}
+      };
+      el("geo-ask-yes").onclick = () => { done(); startSharing(); };
+      el("geo-ask-no").onclick = done;
+    })();
 
     // ---- Map ----
     function ensureMap() {
@@ -1190,8 +1263,15 @@ if (IS_DOSSIER) {
 
       await loadLocations();
       if (run !== locateRun) return;
-      const loc = locations.get(norm(name));
       const isMe = norm(name) === norm(me);
+
+      // Ask HQ for this agent (every lookup is recorded in the location log)
+      let check = null;
+      try { check = await api("/api/locate", { method: "POST", body: JSON.stringify({ target: name }) }); } catch {}
+      if (run !== locateRun) return;
+      if (check?.location) locations.set(norm(name), check.location);
+      const loc = check?.success ? check.location : locations.get(norm(name));
+      if (loc) drawPin(loc);
 
       // Radar scan over a zoomed-out map
       locateScan.hidden = false;
@@ -1209,7 +1289,7 @@ if (IS_DOSSIER) {
       if (!loc) {
         showCard(`
           <div class="card-row">${avatar(name)}<div><div class="card-name">${escapeHtml(name)}</div>
-          <div class="card-sub">🛰️ Off the grid — hasn't shared a location yet.</div></div></div>
+          <div class="card-sub">🛰️ Agent off grid. Hasn't shared a location yet.</div></div></div>
           <div class="card-actions"><button class="card-btn" data-act="msg" type="button">💬 Message</button></div>`);
         locateCard.dataset.agent = name;
         return;
@@ -1225,8 +1305,9 @@ if (IS_DOSSIER) {
       showCard(`
         <div class="card-row">${avatar(name)}<div>
           <div class="card-name">${isMe ? "You" : escapeHtml(name)}</div>
-          <div class="card-sub">${isLive(loc) ? "🟢 Live" : "⚪ Last seen"} · ${escapeHtml(timeAgo(loc.updated_at))}
-          ${loc.accuracy ? ` · within ${Math.round(loc.accuracy)} m` : ""}</div>
+          <div class="card-sub">${isLive(loc)
+            ? `🟢 Live · ${escapeHtml(timeAgo(loc.updated_at))}${loc.accuracy ? ` · within ${Math.round(loc.accuracy)} m` : ""}`
+            : `🛰️ Agent off grid. Last seen ${escapeHtml(timeAgo(loc.updated_at))} here.`}</div>
         </div></div>
         ${isMe ? "" : `<div class="card-actions">
           <button class="card-btn" data-act="msg" type="button">💬 Message</button>
@@ -1271,11 +1352,9 @@ if (IS_DOSSIER) {
     // =====================================================
     // LOG OUT + DIRECTOR CONSOLE
     // =====================================================
-    el("btn-logout")?.addEventListener("click", async () => {
+    el("btn-logout")?.addEventListener("click", () => {
       if (!confirm("Log out of HQ on this device?")) return;
-      try { await fetch("/api/logout", { method: "POST" }); } catch {}
-      sessionStorage.removeItem("agent_name");
-      window.location.href = "index.html";
+      sessionEnded();
     });
 
     if (meInfo.is_director) {
@@ -1287,9 +1366,9 @@ if (IS_DOSSIER) {
 
       const statusLabel = { active: "🟢 Active", pending: "🟡 Waiting for you", disabled: "⚪ Switched off" };
 
-      async function loadDirector() {
+      async function loadDirector({ background = false } = {}) {
         try {
-          const data = await api("/api/director/agents");
+          const data = await api("/api/director/agents", { background });
           const agents = data.agents || [];
           const pending = agents.filter((a) => a.status === "pending").length;
           dirBadge.hidden = !pending;
@@ -1359,8 +1438,58 @@ if (IS_DOSSIER) {
         dirPanel.hidden = true;
         document.body.style.overflow = "";
       });
-      window.addEventListener("imf:agent-request", loadDirector);
-      loadDirector();
+      window.addEventListener("imf:agent-request", () => loadDirector({ background: true }));
+      loadDirector({ background: true });
+
+      // ---- Location log: the last 25 Locate Agent lookups ----
+      const logBtn = el("director-log-btn");
+      const logView = el("director-log");
+      const fmtPos = (lat, lng) => lat == null
+        ? "—"
+        : `<a href="https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=17/${lat}/${lng}" target="_blank" rel="noopener">${Number(lat).toFixed(4)}, ${Number(lng).toFixed(4)}</a>`;
+      const fmtAge = (secs) => secs == null ? "—"
+        : secs < 60 ? "just now" : secs < 3600 ? `${Math.round(secs / 60)} min` : secs < 86400 ? `${Math.round(secs / 3600)} hr` : `${Math.round(secs / 86400)} d`;
+      const statusText = { live: "🟢 Live", stale: "🟡 Stale", off_grid: "⚫ Off grid" };
+
+      async function loadLocationLog() {
+        logView.innerHTML = `<em>Loading location checks...</em>`;
+        try {
+          const data = await api("/api/director/location-checks?limit=25");
+          const rows = data.checks || [];
+          if (!rows.length) {
+            logView.innerHTML = `<div class="comms-empty">No location checks yet.</div>`;
+            return;
+          }
+          logView.innerHTML = `
+            <div class="dir-log-note">Last ${rows.length} Locate Agent lookups, newest first.</div>
+            <div class="dir-log-wrap"><table class="dir-log">
+              <thead><tr><th>When</th><th>Who looked</th><th>Looked up</th><th>Status</th>
+                <th>Looker's position</th><th>Target's position</th><th>Target last seen</th></tr></thead>
+              <tbody>${rows.map((r) => `<tr>
+                <td>${escapeHtml(formatDateTime(r.checked_at))}</td>
+                <td>${escapeHtml(r.checker)}</td>
+                <td>${escapeHtml(r.target)}</td>
+                <td>${statusText[r.status] || escapeHtml(r.status)}</td>
+                <td>${fmtPos(r.checker_lat, r.checker_lng)}</td>
+                <td>${fmtPos(r.target_lat, r.target_lng)}</td>
+                <td>${!r.target_seen_at ? "never" : r.target_age_seconds < 60 ? "just before" : escapeHtml(fmtAge(r.target_age_seconds)) + " before"}</td>
+              </tr>`).join("")}</tbody>
+            </table></div>`;
+        } catch (err) {
+          console.error("Location log error:", err);
+          logView.innerHTML = `<em>Couldn't load the location log.</em>`;
+        }
+      }
+      function showDirectorView(which) {
+        const log = which === "log";
+        logView.hidden = !log;
+        dirList.hidden = log;
+        logBtn.textContent = log ? "👥 Agents" : "📍 Location log";
+        if (log) loadLocationLog();
+        else loadDirector();
+      }
+      logBtn.addEventListener("click", () => showDirectorView(logView.hidden ? "log" : "agents"));
+      el("director-close").addEventListener("click", () => showDirectorView("agents"));
     }
 
     // =====================================================

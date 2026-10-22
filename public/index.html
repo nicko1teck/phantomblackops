@@ -7,33 +7,30 @@
   <link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Share+Tech+Mono&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
-<body class="intro-page">
+<body class="intro-page login-first">
   <audio id="mi-audio" src="assets/mi-theme.mp3" preload="auto"></audio>
   <video id="fire-video" class="fire-layer" src="assets/fire.webm" muted playsinline preload="auto"></video>
   <video id="smoke-video" class="smoke-layer" src="assets/smoke.webm" muted playsinline preload="auto"></video>
   <canvas id="shatter-canvas"></canvas>
 
-  <div id="start-screen">
+  <div id="start-screen" class="is-gone">
     <div id="terminal-wrapper">
       <div id="terminal-box">
         <div id="typed-text"></div>
       </div>
       <button id="start-button" type="button">Start Mission</button>
+      <button id="btn-switch-agent" class="link-btn briefing-switch" type="button"></button>
     </div>
   </div>
 
-  <button id="skip-intro" type="button">Skip &#9654;&#9654;</button>
+  <!-- Fades the screen to black on the way into HQ -->
+  <div id="fade-out"></div>
+
+  <button id="skip-intro" class="is-gone" type="button">Skip &#9654;&#9654;</button>
 
   <div id="background"></div>
   <div id="login-container">
     <h1>Henry's IMF</h1>
-
-    <!-- Already logged in on this device -->
-    <section id="login-welcome" class="login-step" hidden>
-      <div class="login-who"><span id="welcome-avatar"></span><span id="welcome-name" class="login-name"></span></div>
-      <button id="btn-enter-hq" class="big-go" type="button">ENTER HQ ▶</button>
-      <button id="btn-switch-agent" class="link-btn" type="button">Not you? Switch agent</button>
-    </section>
 
     <!-- Pick your face -->
     <section id="login-pick" class="login-step" hidden>

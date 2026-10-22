@@ -3,6 +3,8 @@
 //   - Logins: tap your face + 4-digit PIN (Director uses a password)
 //   - New agents sign up, the Director approves them
 //   - Every request checks WHO is asking (signed login cookie)
+//   - Sessions end after 10 min of inactivity, when the browser closes, or after 12 h
+//   - Every Locate Agent lookup is recorded in location_checks
 //   - Secure Comms (chats), Locate Agent (map), video call signaling
 // Settings (database password etc.) live in the .env file, not here.
 // =========================================================
@@ -77,6 +79,22 @@ async function upgradeDatabase() {
     console.warn("⚠️  No DIRECTOR set in .env - nobody can approve new agents yet");
   }
 
+  // Locate Agent: a record of every lookup (who looked up whom, where both were)
+  await q(`
+    CREATE TABLE IF NOT EXISTS location_checks (
+      id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      checked_at DATETIME NOT NULL,
+      checker VARCHAR(100) NOT NULL,
+      target VARCHAR(100) NOT NULL,
+      status VARCHAR(10) NOT NULL,
+      checker_lat DOUBLE NULL,
+      checker_lng DOUBLE NULL,
+      target_lat DOUBLE NULL,
+      target_lng DOUBLE NULL,
+      target_seen_at DATETIME NULL,
+      target_age_seconds INT NULL
+    )`);
+
   // Locate Agent
   await q(`
     CREATE TABLE IF NOT EXISTS agent_locations (
@@ -109,13 +127,18 @@ const validName = (s) => /^[\p{L}\p{N} ._'-]{2,30}$/u.test(s);
 const sameName = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
 
 // ---------------------------------------------------------
-// Login cookie: "agent name + expiry", signed so it can't be faked
+// Login cookie: "agent name + when logged in + expiry", signed so it can't be faked
+//   - expires after IDLE_MINUTES with no activity (each real request pushes it forward)
+//   - hard limit of MAX_HOURS after login, however active
+//   - no Max-Age, so the browser drops it when it closes
 // ---------------------------------------------------------
 const COOKIE = "imf_session";
-const SESSION_DAYS = 90;
+const IDLE_MINUTES = Number(process.env.IDLE_MINUTES) || 10; // env override is for testing
+const MAX_HOURS = 12;
 
-function makeToken(agentName) {
-  const body = Buffer.from(JSON.stringify({ a: agentName, exp: Date.now() + SESSION_DAYS * 86400000 })).toString("base64url");
+function makeToken(agentName, loginAt = Date.now()) {
+  const payload = { a: agentName, iat: loginAt, exp: Date.now() + IDLE_MINUTES * 60000 };
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const sig = crypto.createHmac("sha256", config.SESSION_SECRET).update(body).digest("base64url");
   return `${body}.${sig}`;
 }
@@ -126,7 +149,9 @@ function readToken(token) {
   if (sig.length !== good.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(good))) return null;
   try {
     const data = JSON.parse(Buffer.from(body, "base64url").toString());
-    return data.exp > Date.now() ? data.a : null;
+    const now = Date.now();
+    if (!data.a || !(data.exp > now) || !(now - data.iat < MAX_HOURS * 3600000)) return null;
+    return { name: data.a, iat: data.iat };
   } catch {
     return null;
   }
@@ -139,29 +164,29 @@ function getCookie(req, name) {
   }
   return null;
 }
-function setLoginCookie(req, res, agentName) {
-  res.cookie(COOKIE, makeToken(agentName), {
+function setLoginCookie(req, res, agentName, loginAt) {
+  res.cookie(COOKIE, makeToken(agentName, loginAt), {
     httpOnly: true,
     sameSite: "lax",
     secure: req.secure, // true once on https
-    maxAge: SESSION_DAYS * 86400000,
-    path: "/",
+    path: "/",          // no maxAge: a "session cookie" that ends when the browser closes
   });
 }
 
 // Look up the logged-in agent (cached briefly so it's fast)
 const agentCache = new Map();
 async function agentFromRequest(req) {
-  const name = readToken(getCookie(req, COOKIE));
-  if (!name) return null;
+  const token = readToken(getCookie(req, COOKIE));
+  if (!token) return null;
+  const name = token.name;
   const hit = agentCache.get(name);
-  if (hit && Date.now() - hit.t < 30000) return hit.agent;
+  if (hit && Date.now() - hit.t < 30000) return hit.agent && { ...hit.agent, loginAt: token.iat };
   const rows = await q("SELECT agent_name, status, is_director FROM agents WHERE agent_name = ?", [name]);
   const agent = rows[0] && rows[0].status === "active"
     ? { name: rows[0].agent_name, isDirector: !!rows[0].is_director }
     : null;
   agentCache.set(name, { agent, t: Date.now() });
-  return agent;
+  return agent && { ...agent, loginAt: token.iat };
 }
 const forgetAgent = (name) => agentCache.delete(name);
 
@@ -172,8 +197,14 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 });
 const requireAgent = wrap(async (req, res, next) => {
   const agent = await agentFromRequest(req);
-  if (!agent) return res.status(401).json({ success: false, message: "Please log in" });
+  if (!agent) {
+    res.clearCookie(COOKIE, { path: "/" });
+    return res.status(401).json({ success: false, message: "Please log in" });
+  }
   req.agent = agent;
+  // Real activity pushes the 10-minute idle timer forward. Automatic background
+  // requests (location updates, refresh checks) send X-IMF-Background and don't.
+  if (req.get("X-IMF-Background") !== "1") setLoginCookie(req, res, agent.name, agent.loginAt);
   next();
 });
 const requireDirector = (req, res, next) =>
@@ -240,7 +271,7 @@ app.post("/api/login", wrap(async (req, res) => {
   if (a.status === "pending") return fail("Waiting for the Director to approve you 🕵️", 403);
   if (a.status !== "active") return fail("This agent is switched off. Ask the Director.", 403);
 
-  setLoginCookie(req, res, a.agent_name);
+  setLoginCookie(req, res, a.agent_name, Date.now());
   console.log("✅ Login:", a.agent_name);
   res.json({
     success: true,
@@ -256,7 +287,11 @@ app.post("/api/logout", (req, res) => {
 
 // Who am I? (the dossier asks this first)
 app.get("/api/me", requireAgent, (req, res) => {
-  res.json({ success: true, agent: { agent_name: req.agent.name, is_director: req.agent.isDirector } });
+  res.json({
+    success: true,
+    agent: { agent_name: req.agent.name, is_director: req.agent.isDirector },
+    session: { idleMinutes: IDLE_MINUTES, maxHours: MAX_HOURS },
+  });
 });
 
 // Choose / change my PIN
@@ -373,6 +408,34 @@ app.post("/api/location", requireAgent, wrap(async (req, res) => {
   res.json({ success: true });
 }));
 
+// Locate one agent, and record the lookup in location_checks
+const LIVE_SECONDS = 5 * 60;
+app.post("/api/locate", requireAgent, wrap(async (req, res) => {
+  const target = await activeAgentNamed(req.body?.target);
+  if (!target) return res.status(404).json({ success: false, message: "No such agent" });
+  const checker = req.agent.name;
+  const now = new Date();
+
+  const rows = await q("SELECT agent_name, lat, lng, accuracy, updated_at FROM agent_locations WHERE agent_name IN (?, ?)", [checker, target]);
+  const find = (n) => rows.find((r) => sameName(r.agent_name, n)) || null;
+  const mine = find(checker);
+  const theirs = find(target);
+
+  const ageSeconds = theirs ? Math.max(0, Math.round((now - new Date(theirs.updated_at)) / 1000)) : null;
+  const status = !theirs ? "off_grid" : ageSeconds <= LIVE_SECONDS ? "live" : "stale";
+
+  if (!sameName(checker, target)) {
+    await q(
+      `INSERT INTO location_checks
+         (checked_at, checker, target, status, checker_lat, checker_lng, target_lat, target_lng, target_seen_at, target_age_seconds)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [now, checker, target, status, mine?.lat ?? null, mine?.lng ?? null,
+        theirs?.lat ?? null, theirs?.lng ?? null, theirs?.updated_at ?? null, ageSeconds]
+    );
+  }
+  res.json({ success: true, status, ageSeconds, location: theirs });
+}));
+
 app.get("/api/locations", requireAgent, wrap(async (req, res) => {
   const rows = await q(
     `SELECT l.agent_name, l.lat, l.lng, l.accuracy, l.updated_at
@@ -387,6 +450,16 @@ app.get("/api/locations", requireAgent, wrap(async (req, res) => {
 app.get("/api/director/agents", requireAgent, requireDirector, wrap(async (req, res) => {
   const rows = await q("SELECT agent_name, email, bio, status, is_director, (pin_hash IS NOT NULL) AS has_pin FROM agents ORDER BY status DESC, agent_name ASC");
   res.json({ success: true, agents: rows.map((r) => ({ ...r, is_director: !!r.is_director, has_pin: !!r.has_pin })) });
+}));
+
+// Most recent Locate Agent lookups (newest first)
+app.get("/api/director/location-checks", requireAgent, requireDirector, wrap(async (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 25, 1), 200);
+  const rows = await q(
+    `SELECT id, checked_at, checker, target, status, checker_lat, checker_lng,
+            target_lat, target_lng, target_seen_at, target_age_seconds
+     FROM location_checks ORDER BY id DESC LIMIT ${limit}`);
+  res.json({ success: true, checks: rows });
 }));
 
 app.post("/api/director/agents/:name/:action", requireAgent, requireDirector, wrap(async (req, res) => {

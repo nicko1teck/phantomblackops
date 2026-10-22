@@ -40,9 +40,18 @@
 
     </div>
 
-    <!-- Are we sharing our location? (tap to retry if blocked) -->
-    <button id="geo-status" class="geo-status" type="button"></button>
 
+  </div>
+
+  <!-- ✅ After login: ask once to share location (the button opens the browser's own prompt) -->
+  <div id="geo-ask" class="geo-ask" hidden>
+    <div class="geo-ask-card">
+      <div class="geo-ask-icon">📡</div>
+      <h2>Share your location?</h2>
+      <p>So your fellow agents can find you with Locate Agent. Only while you're logged in.</p>
+      <button id="geo-ask-yes" class="card-btn" type="button">📍 Share my location</button>
+      <button id="geo-ask-no" class="comms-btn" type="button">Not now</button>
+    </div>
   </div>
 
   <!-- ✅ Locate Agent: full-screen tracking map -->
@@ -72,9 +81,13 @@
       <section class="comms-view">
         <header class="comms-header">
           <h2 class="comms-title">🎖️ Director Console</h2>
-          <button id="director-close" class="comms-btn" type="button">✕ Close</button>
+          <div class="dir-head-btns">
+            <button id="director-log-btn" class="comms-btn" type="button">📍 Location log</button>
+            <button id="director-close" class="comms-btn" type="button">✕ Close</button>
+          </div>
         </header>
         <div id="director-list" class="comms-scroll"></div>
+        <div id="director-log" class="comms-scroll" hidden></div>
       </section>
     </div>
   </div>

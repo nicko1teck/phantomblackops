@@ -910,23 +910,6 @@ body.dossier-page {
 /* =====================================================
    Locate Agent: full-screen tracking map
 ===================================================== */
-.geo-status {
-  display: block;
-  width: 100%;
-  margin-top: 1.2em;
-  padding: 10px 12px;
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 0.95rem;
-  text-align: left;
-  border-radius: 8px;
-  border: 1px dashed #b19559;
-  background: transparent;
-  color: #555;
-  cursor: pointer;
-}
-.geo-status:empty { display: none; }
-.geo-status[data-state="on"] { color: #1d6b1d; border-color: #1d6b1d; }
-.geo-status[data-state="off"] { color: #b30000; border-color: #b30000; }
 
 .locate {
   position: fixed;
@@ -1393,3 +1376,67 @@ textarea.login-input { min-height: 0; resize: none; }
 
 /* OpenStreetMap tiles, darkened to match the spy theme */
 .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9); }
+
+/* =====================================================
+   Start page: login first, then the personal briefing
+===================================================== */
+.login-first #background,
+.login-first #login-container { transition: opacity 0.8s ease, visibility 0s; }
+#login-container.is-gone { display: none; }
+.briefing-switch { margin-top: 18px; opacity: 0.8; }
+#fade-out {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.7s ease;
+}
+#fade-out.is-on { opacity: 1; }
+
+/* =====================================================
+   Dossier: "Share your location?" dialog
+===================================================== */
+.geo-ask {
+  position: fixed;
+  inset: 0;
+  z-index: 9800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.75);
+}
+.geo-ask[hidden] { display: none; }
+.geo-ask-card {
+  width: min(420px, 100%);
+  box-sizing: border-box;
+  padding: 26px 22px;
+  text-align: center;
+  color: #0f0;
+  background: #000;
+  border: 2px solid #0f0;
+  border-radius: 16px;
+  font-family: 'Share Tech Mono', monospace;
+  box-shadow: 0 0 30px rgba(0, 255, 0, 0.25);
+}
+.geo-ask-icon { font-size: 3rem; }
+.geo-ask-card h2 { font-family: 'Black Ops One', sans-serif; font-weight: normal; color: #fff; margin: 8px 0; }
+.geo-ask-card p { font-size: 1.05rem; line-height: 1.4; color: #cfe; margin: 0 0 18px; }
+.geo-ask-card .card-btn { width: 100%; }
+.geo-ask-card .comms-btn { width: 100%; margin-top: 10px; }
+
+/* Director Console: location log */
+.dir-head-btns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.dir-log-note { margin: 4px 0 10px; opacity: 0.8; }
+.dir-log-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.dir-log { width: 100%; border-collapse: collapse; font-size: 0.95rem; min-width: 760px; }
+.dir-log th, .dir-log td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid rgba(0, 255, 0, 0.2);
+  white-space: nowrap;
+}
+.dir-log th { color: #fff; position: sticky; top: 0; background: #000; }
+.dir-log a { color: #7fd4ff; }
