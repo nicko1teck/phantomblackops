@@ -79,6 +79,12 @@ async function upgradeDatabase() {
     console.warn("⚠️  No DIRECTOR set in .env - nobody can approve new agents yet");
   }
 
+  // Director Dark Mode: Locate shows a frozen position instead of the real one
+  await addColumn("agents", "dark_mode", "TINYINT NOT NULL DEFAULT 0");
+  await addColumn("agents", "dark_lat", "DOUBLE NULL");
+  await addColumn("agents", "dark_lng", "DOUBLE NULL");
+  await addColumn("agents", "dark_accuracy", "DOUBLE NULL");
+
   // Locate Agent: a record of every lookup (who looked up whom, where both were)
   await q(`
     CREATE TABLE IF NOT EXISTS location_checks (
@@ -286,13 +292,14 @@ app.post("/api/logout", (req, res) => {
 });
 
 // Who am I? (the dossier asks this first)
-app.get("/api/me", requireAgent, (req, res) => {
+app.get("/api/me", requireAgent, wrap(async (req, res) => {
+  const dark = req.agent.isDirector ? await darkSpot(req.agent.name) : null;
   res.json({
     success: true,
-    agent: { agent_name: req.agent.name, is_director: req.agent.isDirector },
+    agent: { agent_name: req.agent.name, is_director: req.agent.isDirector, dark_mode: !!dark },
     session: { idleMinutes: IDLE_MINUTES, maxHours: MAX_HOURS },
   });
-});
+}));
 
 // Choose / change my PIN
 app.post("/api/me/pin", requireAgent, wrap(async (req, res) => {
@@ -392,6 +399,28 @@ app.post("/api/thread/:other/read", requireAgent, wrap(async (req, res) => {
 // ---------------------------------------------------------
 // Locate Agent (shared while the app is open)
 // ---------------------------------------------------------
+
+// Director Dark Mode: while it's on, the Director's real position is never stored
+// or shown. Everyone sees the frozen spot from the moment Dark Mode was switched on,
+// always looking freshly updated.
+async function darkSpot(name) {
+  const rows = await q(
+    "SELECT dark_lat, dark_lng, dark_accuracy FROM agents WHERE agent_name = ? AND dark_mode = 1 AND is_director = 1 AND dark_lat IS NOT NULL",
+    [name]);
+  return rows[0] ? { lat: rows[0].dark_lat, lng: rows[0].dark_lng, accuracy: rows[0].dark_accuracy } : null;
+}
+async function darkAgents() {
+  const rows = await q(
+    "SELECT agent_name, dark_lat, dark_lng, dark_accuracy FROM agents WHERE dark_mode = 1 AND is_director = 1 AND dark_lat IS NOT NULL");
+  return new Map(rows.map((r) => [r.agent_name.toLowerCase(), { lat: r.dark_lat, lng: r.dark_lng, accuracy: r.dark_accuracy }]));
+}
+async function saveLocation(agent, la, ln, acc, now) {
+  const r = await q("UPDATE agent_locations SET lat = ?, lng = ?, accuracy = ?, updated_at = ? WHERE agent_name = ?", [la, ln, acc, now, agent]);
+  if (!r.affectedRows) {
+    await q("INSERT INTO agent_locations (agent_name, lat, lng, accuracy, updated_at) VALUES (?, ?, ?, ?, ?)", [agent, la, ln, acc, now]);
+  }
+  broadcast({ type: "location", agent, lat: la, lng: ln, accuracy: acc, updated_at: now });
+}
 app.post("/api/location", requireAgent, wrap(async (req, res) => {
   const la = Number(req.body?.lat), ln = Number(req.body?.lng), accRaw = Number(req.body?.accuracy);
   if (!Number.isFinite(la) || !Number.isFinite(ln) || Math.abs(la) > 90 || Math.abs(ln) > 180) {
@@ -400,11 +429,9 @@ app.post("/api/location", requireAgent, wrap(async (req, res) => {
   const acc = Number.isFinite(accRaw) ? accRaw : null;
   const now = new Date();
   const agent = req.agent.name;
-  const r = await q("UPDATE agent_locations SET lat = ?, lng = ?, accuracy = ?, updated_at = ? WHERE agent_name = ?", [la, ln, acc, now, agent]);
-  if (!r.affectedRows) {
-    await q("INSERT INTO agent_locations (agent_name, lat, lng, accuracy, updated_at) VALUES (?, ?, ?, ?, ?)", [agent, la, ln, acc, now]);
-  }
-  broadcast({ type: "location", agent, lat: la, lng: ln, accuracy: acc, updated_at: now });
+  const dark = req.agent.isDirector ? await darkSpot(agent) : null;
+  if (dark) await saveLocation(agent, dark.lat, dark.lng, dark.accuracy, now); // real fix is thrown away
+  else await saveLocation(agent, la, ln, acc, now);
   res.json({ success: true });
 }));
 
@@ -418,8 +445,15 @@ app.post("/api/locate", requireAgent, wrap(async (req, res) => {
 
   const rows = await q("SELECT agent_name, lat, lng, accuracy, updated_at FROM agent_locations WHERE agent_name IN (?, ?)", [checker, target]);
   const find = (n) => rows.find((r) => sameName(r.agent_name, n)) || null;
-  const mine = find(checker);
-  const theirs = find(target);
+  const dark = await darkAgents();
+  const mask = (r) => {
+    const d = r && dark.get(r.agent_name.toLowerCase());
+    return d ? { ...r, ...d, updated_at: now } : r;
+  };
+  let mine = mask(find(checker));
+  let theirs = mask(find(target));
+  const targetDark = dark.get(String(target).toLowerCase());
+  if (!theirs && targetDark) theirs = { agent_name: target, ...targetDark, updated_at: now };
 
   const ageSeconds = theirs ? Math.max(0, Math.round((now - new Date(theirs.updated_at)) / 1000)) : null;
   const status = !theirs ? "off_grid" : ageSeconds <= LIVE_SECONDS ? "live" : "stale";
@@ -441,7 +475,15 @@ app.get("/api/locations", requireAgent, wrap(async (req, res) => {
     `SELECT l.agent_name, l.lat, l.lng, l.accuracy, l.updated_at
      FROM agent_locations l JOIN agents a ON a.agent_name = l.agent_name
      WHERE a.status = 'active'`);
-  res.json({ success: true, locations: rows });
+  const dark = await darkAgents();
+  const now = new Date();
+  res.json({
+    success: true,
+    locations: rows.map((r) => {
+      const d = dark.get(r.agent_name.toLowerCase());
+      return d ? { ...r, ...d, updated_at: now } : r;
+    }),
+  });
 }));
 
 // ---------------------------------------------------------
@@ -450,6 +492,52 @@ app.get("/api/locations", requireAgent, wrap(async (req, res) => {
 app.get("/api/director/agents", requireAgent, requireDirector, wrap(async (req, res) => {
   const rows = await q("SELECT agent_name, email, bio, status, is_director, (pin_hash IS NOT NULL) AS has_pin FROM agents ORDER BY status DESC, agent_name ASC");
   res.json({ success: true, agents: rows.map((r) => ({ ...r, is_director: !!r.is_director, has_pin: !!r.has_pin })) });
+}));
+
+// Dark Mode on/off. The very first time it's switched on, the Director's location
+// at that moment becomes the Dark Mode spot for good. Every later switch-on reuses
+// that same spot; switching off never forgets it.
+app.post("/api/director/dark-mode", requireAgent, requireDirector, wrap(async (req, res) => {
+  const name = req.agent.name;
+  const now = new Date();
+  if (!req.body?.on) {
+    await q("UPDATE agents SET dark_mode = 0 WHERE agent_name = ?", [name]);
+    const la = Number(req.body?.lat), ln = Number(req.body?.lng), acc = Number(req.body?.accuracy);
+    if (Number.isFinite(la) && Number.isFinite(ln) && Math.abs(la) <= 90 && Math.abs(ln) <= 180) {
+      await saveLocation(name, la, ln, Number.isFinite(acc) ? acc : null, now); // back to the real spot right away
+    }
+    return res.json({ success: true, darkMode: false });
+  }
+  const saved = (await q("SELECT dark_lat, dark_lng, dark_accuracy FROM agents WHERE agent_name = ? AND dark_lat IS NOT NULL", [name]))[0];
+  if (saved) {
+    await q("UPDATE agents SET dark_mode = 1 WHERE agent_name = ?", [name]);
+    await saveLocation(name, saved.dark_lat, saved.dark_lng, saved.dark_accuracy, now);
+    return res.json({ success: true, darkMode: true, lat: saved.dark_lat, lng: saved.dark_lng });
+  }
+  let la = Number(req.body?.lat), ln = Number(req.body?.lng), acc = Number(req.body?.accuracy);
+  if (!Number.isFinite(la) || !Number.isFinite(ln) || Math.abs(la) > 90 || Math.abs(ln) > 180) {
+    const rows = await q("SELECT lat, lng, accuracy FROM agent_locations WHERE agent_name = ?", [name]);
+    if (!rows[0]) return res.status(400).json({ success: false, message: "Couldn't get your location yet. Allow location and try again." });
+    ({ lat: la, lng: ln, accuracy: acc } = rows[0]);
+  }
+  acc = Number.isFinite(Number(acc)) ? Number(acc) : null;
+  await q("UPDATE agents SET dark_mode = 1, dark_lat = ?, dark_lng = ?, dark_accuracy = ? WHERE agent_name = ?", [la, ln, acc, name]);
+  await saveLocation(name, la, ln, acc, now);
+  res.json({ success: true, darkMode: true, lat: la, lng: ln });
+}));
+
+// Reset the Dark Mode spot to where the Director is right now (needs a fresh GPS fix,
+// since while dark the stored location is the old spot). Applies at once if Dark Mode is on.
+app.post("/api/director/dark-mode/reset", requireAgent, requireDirector, wrap(async (req, res) => {
+  const name = req.agent.name;
+  const la = Number(req.body?.lat), ln = Number(req.body?.lng), accRaw = Number(req.body?.accuracy);
+  if (!Number.isFinite(la) || !Number.isFinite(ln) || Math.abs(la) > 90 || Math.abs(ln) > 180) {
+    return res.status(400).json({ success: false, message: "Couldn't get your location right now. Allow location and try again." });
+  }
+  const acc = Number.isFinite(accRaw) ? accRaw : null;
+  await q("UPDATE agents SET dark_lat = ?, dark_lng = ?, dark_accuracy = ? WHERE agent_name = ?", [la, ln, acc, name]);
+  if (await darkSpot(name)) await saveLocation(name, la, ln, acc, new Date());
+  res.json({ success: true, lat: la, lng: ln });
 }));
 
 // Most recent Locate Agent lookups (newest first)

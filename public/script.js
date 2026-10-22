@@ -1174,8 +1174,10 @@ if (IS_DOSSIER) {
       const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
       return 2 * R * Math.asin(Math.sqrt(h));
     }
+    let lastFix = null; // newest GPS reading, even ones we didn't send
     function sendLocation(pos) {
       const here = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      lastFix = { ...here, accuracy: pos.coords.accuracy, t: Date.now() };
       const now = Date.now();
       // Don't flood the server: send if moved 25m+ or 30s have passed
       if (lastSent && now - lastSent.t < 30000 && distanceM(lastSent, here) < 25) return;
@@ -1490,6 +1492,61 @@ if (IS_DOSSIER) {
       });
       window.addEventListener("imf:agent-request", () => loadDirector({ background: true }));
       loadDirector({ background: true });
+
+      // ---- Dark Mode: Locate shows the spot you were at when you switched it on ----
+      const darkBtn = el("director-dark-btn");
+      const darkDot = el("dark-indicator");
+      function showDark(on) {
+        darkBtn.textContent = on ? "🌑 Dark Mode: On" : "🌑 Dark Mode: Off";
+        darkBtn.classList.toggle("is-on", on);
+        darkBtn.setAttribute("aria-pressed", String(on));
+        darkDot.hidden = !on;
+      }
+      // Where am I right now? Ask the GPS; if it's slow, use the latest reading
+      // the location sharing already got (if it's under 2 minutes old).
+      const hereNow = (maximumAge) => new Promise((resolve) => {
+        const recent = () => (lastFix && Date.now() - lastFix.t < 120000
+          ? { lat: lastFix.lat, lng: lastFix.lng, accuracy: lastFix.accuracy } : null);
+        if (!navigator.geolocation) return resolve(recent());
+        navigator.geolocation.getCurrentPosition(
+          (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }),
+          () => resolve(recent()),
+          { enableHighAccuracy: true, timeout: 8000, maximumAge: Math.max(maximumAge, 10000) });
+      });
+      showDark(!!meInfo.dark_mode);
+      darkBtn.addEventListener("click", async () => {
+        const turnOn = darkBtn.getAttribute("aria-pressed") !== "true";
+        if (turnOn && !confirm("Go dark? Anyone who locates you will see your Dark Mode spot until you switch it off. (The first time, your spot is wherever you are right now, and it stays that spot for good.)")) return;
+        darkBtn.disabled = true;
+        darkBtn.textContent = turnOn ? "🌑 Going dark..." : "🌑 Coming back...";
+        const spot = await hereNow(turnOn ? 0 : 60000);
+        const res = await api("/api/director/dark-mode", {
+          method: "POST",
+          body: JSON.stringify({ on: turnOn, ...(spot || {}) }),
+        }).catch(() => ({}));
+        darkBtn.disabled = false;
+        if (!res.success) {
+          alert(res.message || "That didn't work.");
+          showDark(!turnOn);
+          return;
+        }
+        showDark(res.darkMode);
+      });
+
+      // Reset the Dark Mode spot to right here, right now
+      const resetBtn = el("director-dark-reset");
+      resetBtn.addEventListener("click", async () => {
+        if (!confirm("Make where you are right now your new Dark Mode spot?")) return;
+        resetBtn.disabled = true;
+        resetBtn.textContent = "📌 Getting your spot...";
+        const spot = await hereNow(0);
+        const res = spot
+          ? await api("/api/director/dark-mode/reset", { method: "POST", body: JSON.stringify(spot) }).catch(() => ({}))
+          : { message: "Couldn't get your location right now. Allow location and try again." };
+        resetBtn.disabled = false;
+        resetBtn.textContent = "📌 Reset dark spot";
+        alert(res.success ? "📌 New Dark Mode spot saved." : res.message || "That didn't work.");
+      });
 
       // ---- Location log: the last 25 Locate Agent lookups ----
       const logBtn = el("director-log-btn");

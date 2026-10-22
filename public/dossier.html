@@ -35,7 +35,7 @@
       <button class="dossier-btn" id="btn-video-call">🎥 Video Call Another Agent</button>
       <button class="dossier-btn">📝 Leave a Message</button>
       <button class="dossier-btn" id="btn-inbox">📥 View Inbox <span id="inbox-badge" class="badge" hidden></span></button>
-      <button class="dossier-btn director-btn" id="btn-director" hidden>🎖️ Director Console <span id="director-badge" class="badge" hidden></span></button>
+      <button class="dossier-btn director-btn" id="btn-director" hidden>🎖️ Director Console <span id="dark-indicator" class="dark-indicator" title="Dark Mode is on" hidden>🌑</span> <span id="director-badge" class="badge" hidden></span></button>
 
 
     </div>
@@ -86,6 +86,10 @@
             <button id="director-close" class="comms-btn" type="button">✕ Close</button>
           </div>
         </header>
+        <div class="dir-dark-bar">
+          <button id="director-dark-btn" class="comms-btn dark-btn" type="button" aria-pressed="false">🌑 Dark Mode: Off</button>
+          <button id="director-dark-reset" class="comms-btn" type="button">📌 Reset dark spot</button>
+        </div>
         <div id="director-list" class="comms-scroll"></div>
         <div id="director-log" class="comms-scroll" hidden></div>
       </section>
