@@ -234,11 +234,11 @@ if (IS_INDEX) {
 
   // --- Step 3: fire, smoke, music, then into HQ ---
   function playVideo(v) {
-    if (!v) return;
+    if (!v) return Promise.reject(new Error("no video"));
     v.classList.add("is-playing");
     v.currentTime = 0;
-    v.play().catch(() => {});
     v.onended = () => v.classList.remove("is-playing");
+    return v.play();
   }
 
   // The login screen comes FIRST now; the cinematic plays after a successful login
@@ -260,6 +260,7 @@ if (IS_INDEX) {
     const sw = el("btn-switch-agent");
     if (sw) sw.textContent = `Not Agent ${name}? Switch agent`;
     loginContainer?.classList.add("is-gone");
+    background?.classList.remove("is-visible"); // black behind the terminal and the shatter
     startScreen?.classList.remove("is-gone", "is-clear");
     skipButton?.classList.remove("is-gone");
     briefingActive = true;
@@ -288,13 +289,20 @@ if (IS_INDEX) {
     startScreen?.classList.add("is-clear");
     explode(snap);
 
+    // Into HQ once the fire finishes (not on a fixed timer)
+    const finish = () => goToHQ();
+    fireVideo?.addEventListener("ended", finish, { once: true });
+    fireVideo?.addEventListener("error", () => setTimeout(finish, 2500), { once: true });
+    revealTimer = setTimeout(finish, 15000); // safety net if the video stalls
+
     setTimeout(() => {
-      playVideo(fireVideo);
-      playVideo(smokeVideo);
+      playVideo(fireVideo).catch(() => { revealTimer = setTimeout(finish, 4000); });
+      playVideo(smokeVideo).catch(() => {});
       themeAudio?.play?.().catch(() => {});
     }, 150);
 
-    revealTimer = setTimeout(goToHQ, 6000);
+    // The shatter happens over black; the camo fades in behind the fire afterwards
+    setTimeout(() => background?.classList.add("is-visible"), 1400);
   }
 
   function skipIntro() {
