@@ -272,7 +272,15 @@ if (IS_INDEX) {
     if (introDone) return;
     introDone = true;
     el("fade-out")?.classList.add("is-on");
-    setTimeout(() => (window.location.href = "dossier.html"), 700);
+    setTimeout(() => {
+      // Hand the theme music to the dossier so it carries on from this exact spot
+      if (themeAudio && !themeAudio.paused && !themeAudio.ended) {
+        try {
+          sessionStorage.setItem("theme_handoff", JSON.stringify({ t: themeAudio.currentTime, at: Date.now() }));
+        } catch {}
+      }
+      window.location.href = "dossier.html";
+    }, 700);
   }
 
   function startMission() {
@@ -580,6 +588,40 @@ if (IS_INDEX) {
 // =========================================================
 // DOSSIER PAGE LOGIC (send + inbox + agent picker + video call)
 // =========================================================
+// Theme music carried over from the intro: picks up where it left off, plays to the end once
+let carriedTheme = null;
+if (IS_DOSSIER) {
+  let handoff = null;
+  try {
+    handoff = JSON.parse(sessionStorage.getItem("theme_handoff") || "null");
+    sessionStorage.removeItem("theme_handoff"); // only once, never again on a reload
+  } catch {}
+  if (handoff && Date.now() - handoff.at < 60000) {
+    const a = new Audio("assets/mi-theme.mp3");
+    a.preload = "auto";
+    carriedTheme = a;
+    const start = () => {
+      // add the second or so the page change took, so the music stays in time
+      a.currentTime = handoff.t + (Date.now() - handoff.at) / 1000;
+      a.play().catch(() => {
+        // Some browsers (iPhone/iPad) need a tap first: resume from the hand-off point on the first touch
+        let resumed = false;
+        const resume = () => {
+          if (resumed) return;
+          resumed = true;
+          a.currentTime = handoff.t;
+          a.play().catch(() => {});
+        };
+        document.addEventListener("pointerdown", resume, { once: true });
+        document.addEventListener("keydown", resume, { once: true });
+      });
+    };
+    if (a.readyState >= 1) start();
+    else a.addEventListener("loadedmetadata", start, { once: true });
+    a.addEventListener("ended", () => (carriedTheme = null), { once: true });
+  }
+}
+
 if (IS_DOSSIER) {
   (async () => {
     // Who is logged in? The server decides (login cookie). Not logged in -> back to the start.
