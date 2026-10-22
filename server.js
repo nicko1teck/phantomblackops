@@ -1,5 +1,5 @@
 // =========================================================
-// Henry's IMF - server
+// Phantom Black Ops - server
 //   - Logins: tap your face + 4-digit PIN (Director uses a password)
 //   - New agents sign up, the Director approves them
 //   - Every request checks WHO is asking (signed login cookie)

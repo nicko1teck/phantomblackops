@@ -1446,3 +1446,5 @@ textarea.login-input { min-height: 0; resize: none; }
 .dark-btn.is-on { background: #1b1030; border-color: #b18cff; color: #e0d0ff; box-shadow: 0 0 10px rgba(177, 140, 255, 0.5); }
 .dark-btn:disabled { opacity: 0.6; }
 .dark-indicator { margin-left: 2px; filter: drop-shadow(0 0 4px rgba(177, 140, 255, 0.9)); }
+
+.nowrap { white-space: nowrap; }
