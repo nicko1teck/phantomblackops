@@ -597,7 +597,7 @@ if (IS_DOSSIER) {
     sessionStorage.removeItem("theme_handoff"); // only once, never again on a reload
   } catch {}
   if (handoff && Date.now() - handoff.at < 60000) {
-    const a = new Audio("assets/mi-theme.mp3");
+    const a = new Audio("https://d17z9scawws7h5.cloudfront.net/assets/mi-theme.mp3");
     a.preload = "auto";
     carriedTheme = a;
     const start = () => {
