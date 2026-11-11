@@ -451,13 +451,16 @@
   owl.addEventListener("contextmenu", (e) => e.preventDefault());
   ["pointerup", "pointercancel"].forEach((ev) => window.addEventListener(ev, unreveal));
   window.addEventListener("blur", unreveal);
+  // The ` key by its position on the keyboard (some Windows layouts treat ` as a
+  // "dead key" for accents, so the typed character isn't reported, but the key is)
+  const isRevealKey = (e) => e.code === "Backquote" || e.key === "`";
   // ...or hold the ` key (top-left of the keyboard), unless typing an answer
   window.addEventListener("keydown", (e) => {
-    if (e.key !== "`" || e.repeat || e.target.closest?.("input, textarea, select")) return;
+    if (!isRevealKey(e) || e.repeat || e.target.closest?.("input, textarea, select")) return;
     e.preventDefault();
     reveal();
   });
-  window.addEventListener("keyup", (e) => { if (e.key === "`") unreveal(); });
+  window.addEventListener("keyup", (e) => { if (isRevealKey(e)) unreveal(); });
 
   // ---- EMERGENCY: Next Page ----
   // Instantly: the message vanishes, the scratch pad closes and empties,

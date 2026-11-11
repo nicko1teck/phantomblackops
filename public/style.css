@@ -323,14 +323,14 @@ body.dossier-page {
 }
 
 #classified-stamp {
-  position: absolute;
+  position: fixed; /* fixed: its big zoom-out can't stretch the page sideways on phones */
   top: 50%;
   left: 50%;
   width: 70vw;
   max-width: 900px;
   transform: translate(-50%, -50%);
   opacity: 0;
-  animation: stampReveal 1s ease forwards, stampFadeZoom 4s ease forwards 6s;
+  animation: stampReveal 0.5s ease forwards, stampFadeZoom 0.9s ease forwards 1.5s; /* gone after ~2.4s */
   z-index: 10;
     pointer-events: none;
 }
@@ -353,6 +353,7 @@ body.dossier-page {
   }
   100% {
     opacity: 0;
+    visibility: hidden;
     transform: translate(-50%, -50%) scale(3.5);
   }
 }
