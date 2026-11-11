@@ -36,5 +36,6 @@ module.exports = {
   DB_PASSWORD: get("DB_PASSWORD", ""),
   DB_NAME: get("DB_NAME", "henrysimfdb"),
   DIRECTOR: get("DIRECTOR", ""),
+  SNS_TOPIC_ARN: get("SNS_TOPIC_ARN", ""), // where app events are announced (notify.js); blank = off
   SESSION_SECRET: secret,
 };

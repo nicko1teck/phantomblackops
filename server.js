@@ -15,6 +15,7 @@ const http = require("http");
 const crypto = require("crypto");
 const WebSocket = require("ws");
 const config = require("./config");
+const { announce } = require("./notify");
 
 const app = express();
 app.set("trust proxy", 1); // so https is detected correctly behind nginx on EC2
@@ -326,6 +327,11 @@ app.post("/api/register", wrap(async (req, res) => {
   );
   console.log("📝 New agent request:", name);
   notifyDirectors({ type: "agent-request", agent: name });
+  // Also email the Director (through SNS), so they hear about it even when not logged in.
+  announce("agent-requested", `PBO: new agent request from ${name}`,
+    `${name} wants to join Phantom Black Ops.\n\nEmail: ${String(email || "").trim() || "(none)"}\n` +
+    `About: ${String(bio || "").trim().slice(0, 500) || "(nothing)"}\n\n` +
+    "Approve or reject them in the Director's panel: https://phantomblackops.nickowen.info");
   res.json({ success: true, message: "Request sent! The Director has to approve you before you can log in." });
 }));
 
