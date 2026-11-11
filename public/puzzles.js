@@ -443,6 +443,12 @@
       f.g.style.opacity = f.from.opacity;
     }
     cleanupTimer = setTimeout(finishCleanup, 750);
+    // a self-destructing message burns once it's been read here
+    if (latest && latest.self_destruct) {
+      const id = latest.id;
+      latest = null;
+      api(`/api/messages/${id}/burn`, { method: "POST", background: true }).then(refreshLatest).catch(() => {});
+    }
   }
 
   // Press and hold the owl (finger or mouse)...

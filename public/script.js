@@ -863,8 +863,10 @@ if (IS_DOSSIER) {
     });
 
     // ---- One chat thread ----
+    let burning = false;        // a self-destruct countdown is on screen: don't redraw the chat
+    const bombText = new Map(); // id -> content of unopened self-destructing messages
     async function loadThread({ scroll = true, background = false } = {}) {
-      if (!openChatWith) return;
+      if (!openChatWith || burning) return;
       const other = openChatWith;
       try {
         const data = await api(`/api/thread/${encodeURIComponent(other)}`, { background });
@@ -879,11 +881,21 @@ if (IS_DOSSIER) {
             const day = dayLabel(m.created_at);
             const divider = day !== lastDay ? `<div class="day-divider"><span>${escapeHtml(day)}</span></div>` : "";
             lastDay = day;
+            if (m.self_destruct && !m.fromMe) {
+              bombText.set(String(m.id), m.content);
+              return `${divider}
+              <div class="bubble-row theirs">
+                <button class="bubble bomb-bubble" type="button" data-burn="${m.id}">
+                  <div class="bubble-text">💣 Self-destructing message</div>
+                  <div class="bubble-time">Tap to open · ${escapeHtml(shortTime(m.created_at))}</div>
+                </button>
+              </div>`;
+            }
             return `${divider}
               <div class="bubble-row ${m.fromMe ? "mine" : "theirs"}">
                 <div class="bubble">
                   <div class="bubble-text">${escapeHtml(m.content)}</div>
-                  <div class="bubble-time">${m.channel === "dead_drop" ? '<span class="dead-drop-tag" title="Sent through the Dead Drop (Math Flash Brain Busters cover page)">🪨 Dead Drop</span> · ' : ""}${escapeHtml(shortTime(m.created_at))}</div>
+                  <div class="bubble-time">${m.self_destruct ? '<span class="bomb-tag">💣 burns after reading</span> · ' : ""}${m.channel === "dead_drop" ? '<span class="dead-drop-tag" title="Sent through the Dead Drop (Math Flash Brain Busters cover page)">🪨 Dead Drop</span> · ' : ""}${escapeHtml(shortTime(m.created_at))}</div>
                 </div>
               </div>`;
           }).join("");
@@ -908,8 +920,41 @@ if (IS_DOSSIER) {
       }
     }
 
+    // Shared by chat bombs and Field Drops: show the text, count down, burn it
+    function selfDestruct(box, textEl, countEl, seconds, onBurned) {
+      let left = seconds;
+      const tick = () => {
+        countEl.textContent = `This message will self-destruct in ${left}...`;
+        if (left-- > 0) return;
+        clearInterval(timer);
+        countEl.textContent = "🔥🔥🔥";
+        box.classList.add("is-burning");
+        setTimeout(onBurned, 1700);
+      };
+      const timer = setInterval(tick, 1000);
+      tick();
+      textEl.hidden = false;
+    }
+
+    threadMessages.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-burn]");
+      if (!btn || burning) return;
+      const id = btn.dataset.burn;
+      burning = true;
+      btn.disabled = true;
+      btn.classList.add("is-open");
+      btn.innerHTML = `<div class="bubble-text">${escapeHtml(bombText.get(id) || "")}</div><div class="bomb-count"></div>`;
+      selfDestruct(btn, btn.querySelector(".bubble-text"), btn.querySelector(".bomb-count"), 10, async () => {
+        await api(`/api/messages/${id}/burn`, { method: "POST" }).catch(() => {});
+        bombText.delete(id);
+        burning = false;
+        loadThread({ scroll: false });
+      });
+    });
+
     function openThread(agent) {
       if (!agent) return;
+      setBomb(false);
       openChatWith = agent;
       threadTitle.innerHTML = `${avatar(agent)}<span>${escapeHtml(agent)}</span>`;
       threadMessages.innerHTML = `<em>Loading...</em>`;
@@ -930,10 +975,11 @@ if (IS_DOSSIER) {
       try {
         const data = await api("/api/messages", {
           method: "POST",
-          body: JSON.stringify({ recipient: openChatWith, content }),
+          body: JSON.stringify({ recipient: openChatWith, content, selfDestruct: bombOn }),
         });
         if (!data.success) throw new Error(data.message || "Send failed");
         threadInput.value = "";
+        setBomb(false);
         hideSuggestions();
         await loadThread();
       } catch (err) {
@@ -946,6 +992,17 @@ if (IS_DOSSIER) {
     }
 
     threadForm.addEventListener("submit", sendInThread);
+
+    // 💣 Self-destruct: the next message burns 10 seconds after it's opened
+    const bombBtn = el("thread-bomb");
+    let bombOn = false;
+    function setBomb(on) {
+      bombOn = on;
+      bombBtn.classList.toggle("is-on", on);
+      bombBtn.setAttribute("aria-pressed", String(on));
+      threadInput.placeholder = on ? "💣 This one self-destructs after it's read..." : "Tap a message above, or type...";
+    }
+    bombBtn.addEventListener("click", () => setBomb(!bombOn));
     // Enter sends; Shift+Enter makes a new line
     threadInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) sendInThread(e);
@@ -1137,6 +1194,9 @@ if (IS_DOSSIER) {
       else if (!comms.hidden && !listView.hidden) loadConversations({ background: true });
       else refreshBadge();
     });
+    // The other agent burned one of my self-destructing messages
+    window.addEventListener("imf:burned", () => { if (openChatWith) loadThread({ scroll: false, background: true }); });
+
     // Backup in case the live connection drops: check every 20s
     setInterval(() => {
       if (openChatWith) loadThread({ scroll: false, background: true });
@@ -1405,6 +1465,137 @@ if (IS_DOSSIER) {
     });
 
     // =====================================================
+    // FIELD DROPS: the Director hides a message at a real place.
+    // The hunt map starts grainy, gray and icy blue, and sharpens, zooms in
+    // and warms to red as you get closer. It never shows where the drop is.
+    // =====================================================
+    const dropBtn = el("btn-field-drop");
+    const dropBadge = el("field-drop-badge");
+    const finder = el("finder");
+    let myDrops = [];
+    let finderMap = null, finderWatch = null, huntDrop = null, lastPing = 0, huntDone = false;
+
+    async function refreshDrops({ background = true } = {}) {
+      try {
+        const data = await api("/api/field-drops", { background });
+        myDrops = data.drops || [];
+      } catch { myDrops = []; }
+      dropBtn.hidden = !myDrops.length;
+      dropBadge.hidden = myDrops.length < 2;
+      dropBadge.textContent = myDrops.length;
+    }
+    refreshDrops();
+    window.addEventListener("imf:field-drop", () => refreshDrops());
+
+    // 0 = right there (hot), 1 = far away (cold). Log scale so the last stretch matters most.
+    const coldness = (dist, radius) => Math.min(1, Math.max(0, Math.log(Math.max(dist, radius) / radius) / Math.log(3000 / radius)));
+    const HEAT = [
+      [0.8, "🧊 FREEZING"], [0.6, "❄️ COLD"], [0.42, "🌤️ WARMER"], [0.25, "🔥 WARM"], [0.1, "🔥🔥 HOT"], [-1, "🔥🔥🔥 BURNING UP"],
+    ];
+    function paintHeat(t) {
+      const mapEl = el("finder-map");
+      mapEl.style.filter = `blur(${(7 * t).toFixed(1)}px) grayscale(${t.toFixed(2)}) contrast(${(1 - 0.25 * t).toFixed(2)})`;
+      el("finder-grain").style.opacity = (0.75 * t).toFixed(2);
+      // icy blue when far -> neutral in the middle -> orange -> red when close (never through green)
+      const hue = t > 0.5 ? 212 : Math.round(5 + 35 * (t / 0.5));
+      const sat = Math.round(20 + 75 * Math.abs(t - 0.5) * 2);
+      el("finder-tint").style.background = `hsla(${hue}, ${sat}%, 50%, ${(0.3 + 0.15 * (1 - t)).toFixed(2)})`;
+      el("finder-heat").textContent = HEAT.find(([cut]) => t > cut)[1];
+      el("finder-heat").style.color = `hsl(${hue}, ${Math.max(sat, 60)}%, 68%)`;
+    }
+    function roughDistance(m) {
+      if (m >= 1000) return `about ${(m / 1609).toFixed(1)} miles away`;
+      if (m >= 200) return `about ${Math.round(m / 50) * 50} meters away`;
+      return `about ${Math.round(m / 10) * 10} meters away`;
+    }
+
+    function showFound(res) {
+      huntDone = true;
+      stopHunt();
+      paintHeat(0);
+      el("finder-heat").textContent = "📦 FOUND IT";
+      el("finder-dist").textContent = "";
+      const found = el("finder-found");
+      found.hidden = false;
+      el("finder-found-from").textContent = `From ${res.from || huntDrop.from}`;
+      const textEl = el("finder-found-text");
+      const countEl = el("finder-found-count");
+      const card = found.querySelector(".finder-found-card");
+      card.classList.remove("is-burning");
+      textEl.textContent = res.content;
+      countEl.textContent = "";
+      el("finder-done").hidden = true;
+      if (res.burnAfter) {
+        selfDestruct(card, textEl, countEl, 10, async () => {
+          await api(`/api/field-drops/${huntDrop.id}/burn`, { method: "POST" }).catch(() => {});
+          closeFinder();
+        });
+      } else {
+        el("finder-done").hidden = false;
+      }
+    }
+
+    async function onHuntFix(pos) {
+      if (huntDone || Date.now() - lastPing < 2500) return;
+      lastPing = Date.now();
+      const here = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy };
+      try {
+        const res = await api(`/api/field-drops/${huntDrop.id}/ping`, { method: "POST", body: JSON.stringify(here) });
+        if (!res.success) { el("finder-dist").textContent = "This drop is gone."; return; }
+        if (res.unlocked) return showFound(res);
+        const t = coldness(res.distance, res.radius);
+        paintHeat(t);
+        el("finder-dist").textContent = roughDistance(res.distance);
+        // the map follows YOU, and zooms in as you warm up (never centered on the drop)
+        finderMap.setView([here.lat, here.lng], Math.round(13 + 5 * (1 - t)), { animate: true });
+      } catch {}
+    }
+
+    function stopHunt() {
+      if (finderWatch != null) navigator.geolocation.clearWatch(finderWatch);
+      finderWatch = null;
+    }
+    function closeFinder() {
+      stopHunt();
+      finder.hidden = true;
+      el("finder-found").hidden = true;
+      document.body.style.overflow = "";
+      huntDrop = null;
+      refreshDrops();
+    }
+
+    function openFinder(drop) {
+      huntDrop = drop;
+      huntDone = false;
+      lastPing = 0;
+      finder.hidden = false;
+      el("finder-found").hidden = true;
+      document.body.style.overflow = "hidden";
+      el("finder-from").textContent = `📦 Field Drop from ${drop.from}`;
+      el("finder-dist").textContent = "Getting your location";
+      if (!finderMap) {
+        finderMap = L.map("finder-map", { zoomControl: false, attributionControl: true, dragging: false,
+          scrollWheelZoom: false, doubleClickZoom: false, touchZoom: false, boxZoom: false, keyboard: false })
+          .setView([39.5, -98.35], 13);
+        L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 19, attribution: "&copy; OpenStreetMap",
+        }).addTo(finderMap);
+      }
+      setTimeout(() => finderMap.invalidateSize(), 50);
+      paintHeat(1);
+      el("finder-heat").textContent = "📡 Searching...";
+      if (drop.unlocked) return showFound({ content: drop.content, from: drop.from, burnAfter: drop.burnAfter });
+      if (!navigator.geolocation) { el("finder-dist").textContent = "This device can't share its location."; return; }
+      finderWatch = navigator.geolocation.watchPosition(onHuntFix,
+        () => { if (!huntDone) el("finder-dist").textContent = "Turn on location to hunt this drop."; },
+        { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
+    }
+
+    dropBtn.addEventListener("click", () => { if (myDrops.length) openFinder(myDrops[0]); });
+    el("finder-close").addEventListener("click", closeFinder);
+    el("finder-done").addEventListener("click", closeFinder);
+
+    // =====================================================
     // LOG OUT + DIRECTOR CONSOLE
     // =====================================================
     el("btn-logout")?.addEventListener("click", () => {
@@ -1590,15 +1781,125 @@ if (IS_DOSSIER) {
           logView.innerHTML = `<em>Couldn't load the location log.</em>`;
         }
       }
+      // ---- Field Drops (plant + track) and Burned messages ----
+      const dropsView = el("director-drops");
+      const burnedView = el("director-burned");
+      const dropsBtn = el("director-drops-btn");
+      const burnedBtn = el("director-burned-btn");
+      let dropMap = null, dropMarker = null, dropSpot = null;
+
+      function setDropSpot(lat, lng, zoom) {
+        dropSpot = { lat, lng };
+        if (!dropMarker) dropMarker = L.marker([lat, lng]).addTo(dropMap);
+        else dropMarker.setLatLng([lat, lng]);
+        if (zoom) dropMap.setView([lat, lng], zoom);
+      }
+      async function loadDrops() {
+        // agents to pick from
+        const sel = el("drop-to");
+        if (!sel.options.length) {
+          const data = await api("/api/agents").catch(() => ({}));
+          sel.innerHTML = (data.agents || []).filter((n) => norm(n) !== norm(me))
+            .map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");
+        }
+        // the hide-it-here map
+        if (!dropMap) {
+          const start = lastFix ? [lastFix.lat, lastFix.lng] : [39.5, -98.35];
+          dropMap = L.map("drop-map", { zoomControl: true }).setView(start, lastFix ? 16 : 4);
+          L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap" }).addTo(dropMap);
+          dropMap.on("click", (e) => setDropSpot(e.latlng.lat, e.latlng.lng));
+        }
+        setTimeout(() => dropMap.invalidateSize(), 50);
+        loadDropList();
+      }
+      async function loadDropList() {
+        const box = el("drop-list");
+        try {
+          const data = await api("/api/director/field-drops");
+          const rows = data.drops || [];
+          if (!rows.length) { box.innerHTML = `<div class="comms-empty">No drops planted yet.</div>`; return; }
+          const status = (d) => d.cancelled_at ? "✕ Called off"
+            : d.burned_at ? `🔥 Read &amp; burned ${escapeHtml(formatDateTime(d.burned_at))}`
+            : d.unlocked_at ? `📦 Found ${escapeHtml(formatDateTime(d.unlocked_at))}` : "⏳ Waiting";
+          box.innerHTML = `<div class="dir-log-wrap"><table class="dir-log">
+            <thead><tr><th>Planted</th><th>For</th><th>Message</th><th>Spot</th><th>Radius</th><th>Status</th><th></th></tr></thead>
+            <tbody>${rows.map((d) => `<tr>
+              <td>${escapeHtml(formatDateTime(d.created_at))}</td>
+              <td>${escapeHtml(d.recipient)}</td>
+              <td>${escapeHtml(d.content)}${d.burn_after ? " 💣" : ""}</td>
+              <td>${fmtPos(d.lat, d.lng)}</td>
+              <td>${d.radius_m} m</td>
+              <td>${status(d)}</td>
+              <td>${!d.unlocked_at && !d.cancelled_at ? `<button class="comms-btn" data-cancel="${d.id}" type="button">Call off</button>` : ""}</td>
+            </tr>`).join("")}</tbody></table></div>`;
+        } catch {
+          box.innerHTML = `<em>Couldn't load drops.</em>`;
+        }
+      }
+      el("drop-list").addEventListener("click", async (e) => {
+        const b = e.target.closest("[data-cancel]");
+        if (!b || !confirm("Call off this drop? The agent won't be able to find it.")) return;
+        await api(`/api/director/field-drops/${b.dataset.cancel}/cancel`, { method: "POST" }).catch(() => {});
+        loadDropList();
+      });
+      el("drop-here").addEventListener("click", async () => {
+        const b = el("drop-here");
+        b.disabled = true; b.textContent = "📍 Finding you...";
+        const spot = await hereNow(0);
+        b.disabled = false; b.textContent = "📍 Where I am now";
+        if (!spot) return alert("Couldn't get your location right now. Tap the map instead.");
+        setDropSpot(spot.lat, spot.lng, 18);
+      });
+      el("drop-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if (!dropSpot) return alert("Pick where to hide it: tap the map, or use Where I am now.");
+        const body = {
+          recipient: el("drop-to").value,
+          content: el("drop-text").value.trim(),
+          lat: dropSpot.lat, lng: dropSpot.lng,
+          radius: Number(el("drop-radius").value),
+          burnAfter: el("drop-burn").checked,
+        };
+        const res = await api("/api/director/field-drops", { method: "POST", body: JSON.stringify(body) }).catch(() => ({}));
+        if (!res.success) return alert(res.message || "That didn't work.");
+        el("drop-text").value = "";
+        alert(`📦 Drop planted for ${body.recipient}.`);
+        loadDropList();
+      });
+      window.addEventListener("imf:field-drop-update", () => { if (!dropsView.hidden) loadDropList(); });
+
+      async function loadBurned() {
+        burnedView.innerHTML = `<em>Loading...</em>`;
+        try {
+          const data = await api("/api/director/burned");
+          const rows = data.messages || [];
+          burnedView.innerHTML = rows.length
+            ? `<div class="dir-log-note">Self-destructed messages, newest first. Only you can see these.</div>
+               <div class="dir-log-wrap"><table class="dir-log">
+               <thead><tr><th>Burned</th><th>From</th><th>To</th><th>Message</th><th>Sent</th></tr></thead>
+               <tbody>${rows.map((m) => `<tr><td>${escapeHtml(formatDateTime(m.burned_at))}</td><td>${escapeHtml(m.sender)}</td>
+                 <td>${escapeHtml(m.recipient)}</td><td>${escapeHtml(m.content)}</td><td>${escapeHtml(formatDateTime(m.created_at))}</td></tr>`).join("")}
+               </tbody></table></div>`
+            : `<div class="comms-empty">No messages have self-destructed yet.</div>`;
+        } catch {
+          burnedView.innerHTML = `<em>Couldn't load burned messages.</em>`;
+        }
+      }
+
       function showDirectorView(which) {
-        const log = which === "log";
-        logView.hidden = !log;
-        dirList.hidden = log;
-        logBtn.textContent = log ? "👥 Agents" : "📍 Location log";
-        if (log) loadLocationLog();
+        const views = { agents: dirList, log: logView, drops: dropsView, burned: burnedView };
+        for (const [k, v] of Object.entries(views)) v.hidden = k !== which;
+        logBtn.textContent = which === "log" ? "👥 Agents" : "📍 Location log";
+        dropsBtn.textContent = which === "drops" ? "👥 Agents" : "📦 Field Drops";
+        burnedBtn.textContent = which === "burned" ? "👥 Agents" : "🔥 Burned";
+        if (which === "log") loadLocationLog();
+        else if (which === "drops") loadDrops();
+        else if (which === "burned") loadBurned();
         else loadDirector();
       }
       logBtn.addEventListener("click", () => showDirectorView(logView.hidden ? "log" : "agents"));
+      dropsBtn.addEventListener("click", () => showDirectorView(dropsView.hidden ? "drops" : "agents"));
+      burnedBtn.addEventListener("click", () => showDirectorView(burnedView.hidden ? "burned" : "agents"));
       el("director-close").addEventListener("click", () => showDirectorView("agents"));
     }
 
@@ -1732,6 +2033,12 @@ function resetPeerConnection({ keepPending = false } = {}) {
         // A new agent asked to join (Director only)
         if (msg.type === "agent-request") {
           window.dispatchEvent(new CustomEvent("imf:agent-request", { detail: msg }));
+          return;
+        }
+
+        // Self-destructs and Field Drops -> let those parts refresh
+        if (msg.type === "burned" || msg.type === "field-drop" || msg.type === "field-drop-update") {
+          window.dispatchEvent(new CustomEvent(`imf:${msg.type}`, { detail: msg }));
           return;
         }
 

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Building Scan prototype</title>
+  <link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body style="background:#020805">
+  <script src="scan.js"></script>
+  <script>
+    // Prototype: a made-up neighborhood. ?real=1 asks the server for real OpenStreetMap buildings.
+    const q = new URLSearchParams(location.search);
+    const lat = Number(q.get("lat")) || 38.6270, lng = Number(q.get("lng")) || -90.1994;
+    if (q.get("real")) {
+      fetch(`/api/buildings?lat=${lat}&lng=${lng}`).then((r) => r.json())
+        .then((d) => ImfScan.open({ lat, lng, agent: q.get("agent") || "Henry", buildings: d.buildings || [] }));
+    } else {
+      ImfScan.open({ lat, lng, agent: q.get("agent") || "Henry", buildings: ImfScan.sampleBuildings(lat, lng), sample: true });
+    }
+  </script>
+</body>
+</html>

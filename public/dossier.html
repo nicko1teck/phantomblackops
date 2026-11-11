@@ -33,6 +33,7 @@
       <button class="dossier-btn" id="btn-inbox" type="button">💬 Secure Comms <span id="inbox-badge" class="badge" hidden></span></button>
       <button class="dossier-btn" id="btn-locate" type="button">📍 Locate Agent</button>
       <button class="dossier-btn" id="btn-video-call" type="button">🎥 Video Call Another Agent</button>
+      <button class="dossier-btn field-drop-btn" id="btn-field-drop" type="button" hidden>📦 Field Drop Waiting <span id="field-drop-badge" class="badge" hidden></span></button>
       <button class="dossier-btn" id="btn-undercover" type="button">🧩 Go Undercover</button>
       <button class="dossier-btn director-btn" id="btn-director" type="button" hidden>🎖️ Director Console <span id="dark-indicator" class="dark-indicator" title="Dark Mode is on" hidden>🌑</span> <span id="director-badge" class="badge" hidden></span></button>
     </div>
@@ -48,6 +49,32 @@
       <p>So your fellow agents can find you with Locate Agent. Only while you're logged in.</p>
       <button id="geo-ask-yes" class="card-btn" type="button">📍 Share my location</button>
       <button id="geo-ask-no" class="comms-btn" type="button">Not now</button>
+    </div>
+  </div>
+
+  <!-- ✅ Field Drop hunt: the map warms up and sharpens as you get closer -->
+  <div id="finder" class="finder" hidden>
+    <div id="finder-map" class="finder-map"></div>
+    <div id="finder-grain" class="finder-grain"></div>
+    <div id="finder-tint" class="finder-tint"></div>
+    <div class="finder-hud">
+      <div class="finder-top">
+        <div id="finder-from" class="finder-from">📦 Field Drop</div>
+        <button id="finder-close" class="comms-btn" type="button">✕ Abort</button>
+      </div>
+      <div class="finder-bottom">
+        <div id="finder-heat" class="finder-heat">📡 Searching...</div>
+        <div id="finder-dist" class="finder-dist">Getting your location</div>
+      </div>
+    </div>
+    <div id="finder-found" class="finder-found" hidden>
+      <div class="finder-found-card">
+        <div class="finder-found-title">📦 DROP UNLOCKED</div>
+        <div id="finder-found-from" class="finder-found-from"></div>
+        <div id="finder-found-text" class="finder-found-text"></div>
+        <div id="finder-found-count" class="finder-found-count"></div>
+        <button id="finder-done" class="card-btn" type="button" hidden>✅ Got it</button>
+      </div>
     </div>
   </div>
 
@@ -86,9 +113,31 @@
         <div class="dir-dark-bar">
           <button id="director-dark-btn" class="comms-btn dark-btn" type="button" aria-pressed="false">🌑 Dark Mode: Off</button>
           <button id="director-dark-reset" class="comms-btn" type="button">📌 Reset dark spot</button>
+          <button id="director-drops-btn" class="comms-btn" type="button">📦 Field Drops</button>
+          <button id="director-burned-btn" class="comms-btn" type="button">🔥 Burned</button>
         </div>
         <div id="director-list" class="comms-scroll"></div>
         <div id="director-log" class="comms-scroll" hidden></div>
+        <div id="director-drops" class="comms-scroll" hidden>
+          <form id="drop-form" class="drop-form" autocomplete="off">
+            <div class="drop-form-title">📦 Plant a Field Drop</div>
+            <label>For agent <select id="drop-to"></select></label>
+            <label>Secret message <textarea id="drop-text" rows="2" maxlength="1000" placeholder="e.g. Your next clue is under the welcome mat"></textarea></label>
+            <div class="drop-where">
+              <span>Hide it at:</span>
+              <button id="drop-here" class="comms-btn" type="button">📍 Where I am now</button>
+              <span class="drop-or">or tap the map</span>
+            </div>
+            <div id="drop-map" class="drop-map"></div>
+            <div class="drop-opts">
+              <label>Unlocks within <select id="drop-radius"><option value="25">25 m</option><option value="50" selected>50 m</option><option value="100">100 m</option></select></label>
+              <label class="drop-check"><input id="drop-burn" type="checkbox" checked /> 💣 Burn after reading</label>
+              <button id="drop-plant" class="card-btn" type="submit">Plant drop</button>
+            </div>
+          </form>
+          <div id="drop-list"></div>
+        </div>
+        <div id="director-burned" class="comms-scroll" hidden></div>
       </section>
     </div>
   </div>
@@ -127,6 +176,7 @@
 
         <form id="thread-form" class="thread-compose" autocomplete="off">
           <button id="quick-toggle" class="quick-toggle" type="button" title="Show/hide quick messages">⚡</button>
+          <button id="thread-bomb" class="quick-toggle bomb-toggle" type="button" aria-pressed="false" title="Self-destruct after reading">💣</button>
           <textarea id="thread-input" rows="2" placeholder="Tap a message above, or type..."></textarea>
           <button id="thread-send" class="thread-send" type="submit">SEND ▶</button>
         </form>

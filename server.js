@@ -59,6 +59,27 @@ async function upgradeDatabase() {
   // (sent from the Brain Busters puzzle page cover). Old messages are all "comms".
   await addColumn("messages", "channel", "VARCHAR(16) NOT NULL DEFAULT 'comms'");
 
+  // Self-destructing messages: hidden from both agents once burned (the Director keeps a copy)
+  await addColumn("messages", "self_destruct", "TINYINT NOT NULL DEFAULT 0");
+  await addColumn("messages", "burned_at", "DATETIME NULL");
+
+  // Field Drops: messages the Director hides at a real place; they unlock when the agent gets there
+  await q(`
+    CREATE TABLE IF NOT EXISTS field_drops (
+      id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      created_at DATETIME NOT NULL,
+      created_by VARCHAR(100) NOT NULL,
+      recipient VARCHAR(100) NOT NULL,
+      content TEXT NOT NULL,
+      lat DOUBLE NOT NULL,
+      lng DOUBLE NOT NULL,
+      radius_m INT NOT NULL DEFAULT 50,
+      burn_after TINYINT NOT NULL DEFAULT 1,
+      unlocked_at DATETIME NULL,
+      burned_at DATETIME NULL,
+      cancelled_at DATETIME NULL
+    )`);
+
   // Unread badges (old messages count as already read)
   await addColumn("messages", "read_at", "DATETIME NULL", () =>
     q("UPDATE messages SET read_at = created_at WHERE read_at IS NULL"));
@@ -361,9 +382,10 @@ app.post("/api/messages", requireAgent, wrap(async (req, res) => {
   if (!recipient || !content) return res.status(400).json({ success: false, message: "Missing recipient or message" });
   if (content.length > 2000) return res.status(400).json({ success: false, message: "Message too long" });
   const channel = req.body?.channel === "dead_drop" ? "dead_drop" : "comms";
+  const selfDestruct = req.body?.selfDestruct ? 1 : 0;
 
-  const result = await q("INSERT INTO messages (sender, recipient, content, channel) VALUES (?, ?, ?, ?)",
-    [req.agent.name, recipient, content, channel]);
+  const result = await q("INSERT INTO messages (sender, recipient, content, channel, self_destruct) VALUES (?, ?, ?, ?, ?)",
+    [req.agent.name, recipient, content, channel, selfDestruct]);
   notifyAgent(recipient, { type: "new-message", from: req.agent.name, channel });
   res.json({ success: true, messageId: result.insertId });
 }));
@@ -372,8 +394,8 @@ app.post("/api/messages", requireAgent, wrap(async (req, res) => {
 app.get("/api/conversations", requireAgent, wrap(async (req, res) => {
   const me = req.agent.name;
   const rows = await q(
-    `SELECT sender, recipient, content, channel, created_at, read_at FROM messages
-     WHERE sender = ? OR recipient = ? ORDER BY created_at ASC`, [me, me]);
+    `SELECT sender, recipient, content, channel, self_destruct, created_at, read_at FROM messages
+     WHERE (sender = ? OR recipient = ?) AND burned_at IS NULL ORDER BY created_at ASC`, [me, me]);
 
   const byPartner = new Map();
   for (const m of rows) {
@@ -382,7 +404,7 @@ app.get("/api/conversations", requireAgent, wrap(async (req, res) => {
     const key = partner.toLowerCase();
     if (!key || key === me.toLowerCase()) continue;
     const c = byPartner.get(key) || { agent: partner, unread: 0 };
-    c.lastMessage = m.content;
+    c.lastMessage = m.self_destruct ? "💣 Self-destructing message" : m.content;
     c.lastChannel = m.channel || "comms";
     c.lastFromMe = fromMe;
     c.lastAt = m.created_at;
@@ -396,17 +418,130 @@ app.get("/api/conversations", requireAgent, wrap(async (req, res) => {
 // The newest message sent TO me, from anyone (the Brain Busters reveal shows it)
 app.get("/api/messages/latest-incoming", requireAgent, wrap(async (req, res) => {
   const rows = await q(
-    `SELECT id, sender, content, channel, created_at, read_at FROM messages
-     WHERE recipient = ? ORDER BY created_at DESC, id DESC LIMIT 1`, [req.agent.name]);
+    `SELECT id, sender, content, channel, self_destruct, created_at, read_at FROM messages
+     WHERE recipient = ? AND burned_at IS NULL ORDER BY created_at DESC, id DESC LIMIT 1`, [req.agent.name]);
   res.json({ success: true, message: rows[0] || null });
+}));
+
+// The recipient has read a self-destructing message: burn it. Both agents stop seeing it;
+// the row stays in the database so the Director can still read it.
+app.post("/api/messages/:id/burn", requireAgent, wrap(async (req, res) => {
+  const rows = await q("SELECT id, sender, recipient FROM messages WHERE id = ? AND self_destruct = 1 AND burned_at IS NULL", [req.params.id]);
+  const m = rows[0];
+  if (!m || !sameName(m.recipient, req.agent.name)) return res.status(404).json({ success: false, message: "Nothing to burn" });
+  const now = new Date();
+  await q("UPDATE messages SET burned_at = ?, read_at = COALESCE(read_at, ?) WHERE id = ?", [now, now, m.id]);
+  notifyAgent(m.sender, { type: "burned", id: m.id, by: req.agent.name });
+  res.json({ success: true });
+}));
+
+// ---------------------------------------------------------
+// Building Scan: building outlines + heights near a spot, from OpenStreetMap
+// (free to use with credit). Cached so we don't hit their server repeatedly.
+// ---------------------------------------------------------
+const buildingCache = new Map(); // "lat,lng" rounded to ~50 m -> { at, buildings }
+const OVERPASS = process.env.OVERPASS_URL || "https://overpass-api.de/api/interpreter";
+function guessHeight(tags) {
+  const num = (v) => { const n = parseFloat(String(v || "").replace(",", ".")); return Number.isFinite(n) && n > 0 ? n : null; };
+  const h = num(tags.height), lv = num(tags["building:levels"]);
+  if (h) return { height: h, levels: lv || Math.max(1, Math.round(h / 3.2)), estimated: false };
+  if (lv) return { height: lv * 3.2 + 1.5, levels: lv, estimated: true };
+  const kind = tags.building;
+  const levels = /apartments|hotel|office/.test(kind) ? 4 : /school|commercial|retail|church|hospital|university/.test(kind) ? 2 : 1;
+  return { height: levels * 3.2 + 1.5, levels, estimated: true };
+}
+app.get("/api/buildings", requireAgent, wrap(async (req, res) => {
+  const la = Number(req.query.lat), ln = Number(req.query.lng);
+  if (!validSpot(la, ln)) return res.status(400).json({ success: false, message: "Bad position" });
+  const key = `${la.toFixed(3)},${ln.toFixed(3)}`;
+  const hit = buildingCache.get(key);
+  if (hit && Date.now() - hit.at < 7 * 86400e3) return res.json({ success: true, cached: true, buildings: hit.buildings });
+  const query = `[out:json][timeout:20];way["building"](around:220,${la},${ln});out tags geom 400;`;
+  let data;
+  try {
+    const r = await fetch(OVERPASS, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "PhantomBlackOps/1.0 (family app)" },
+      body: "data=" + encodeURIComponent(query),
+      signal: AbortSignal.timeout(25000),
+    });
+    if (!r.ok) throw new Error(`Overpass ${r.status}`);
+    data = await r.json();
+  } catch (e) {
+    console.warn("⚠️  Building lookup failed:", e.message);
+    return res.status(502).json({ success: false, message: "Couldn't reach the map service. Try again in a minute." });
+  }
+  const buildings = (data.elements || [])
+    .filter((el) => el.type === "way" && Array.isArray(el.geometry) && el.geometry.length >= 3)
+    .map((el) => ({
+      outline: el.geometry.map((p) => [p.lat, p.lon]),
+      name: el.tags?.name || null,
+      kind: el.tags?.building || null,
+      ...guessHeight(el.tags || {}),
+    }));
+  if (buildingCache.size > 500) buildingCache.clear();
+  buildingCache.set(key, { at: Date.now(), buildings });
+  res.json({ success: true, buildings });
+}));
+
+// ---------------------------------------------------------
+// Field Drops: hidden at a real place, unlocked by being there
+// ---------------------------------------------------------
+function metersBetween(lat1, lng1, lat2, lng2) {
+  const R = 6371000, rad = (d) => (d * Math.PI) / 180;
+  const dLat = rad(lat2 - lat1), dLng = rad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+const validSpot = (la, ln) => Number.isFinite(la) && Number.isFinite(ln) && Math.abs(la) <= 90 && Math.abs(ln) <= 180;
+
+// My drops that haven't burned yet. Never includes where they are.
+app.get("/api/field-drops", requireAgent, wrap(async (req, res) => {
+  const rows = await q(
+    `SELECT id, created_by, created_at, radius_m, burn_after, unlocked_at, content FROM field_drops
+     WHERE recipient = ? AND burned_at IS NULL AND cancelled_at IS NULL ORDER BY created_at ASC`, [req.agent.name]);
+  res.json({
+    success: true,
+    drops: rows.map((d) => ({
+      id: d.id, from: d.created_by, created_at: d.created_at, radius: d.radius_m, burnAfter: !!d.burn_after,
+      unlocked: !!d.unlocked_at, content: d.unlocked_at ? d.content : undefined,
+    })),
+  });
+}));
+
+// "Here I am": answers how far away the drop is, or unlocks it if I'm there.
+app.post("/api/field-drops/:id/ping", requireAgent, wrap(async (req, res) => {
+  const la = Number(req.body?.lat), ln = Number(req.body?.lng), acc = Number(req.body?.accuracy);
+  if (!validSpot(la, ln)) return res.status(400).json({ success: false, message: "Bad position" });
+  const rows = await q("SELECT * FROM field_drops WHERE id = ? AND burned_at IS NULL AND cancelled_at IS NULL", [req.params.id]);
+  const d = rows[0];
+  if (!d || !sameName(d.recipient, req.agent.name)) return res.status(404).json({ success: false, message: "No such drop" });
+  const dist = metersBetween(la, ln, d.lat, d.lng);
+  const slack = Number.isFinite(acc) ? Math.min(acc, 30) / 2 : 0; // forgive a little GPS wobble
+  if (d.unlocked_at || dist - slack <= d.radius_m) {
+    if (!d.unlocked_at) {
+      await q("UPDATE field_drops SET unlocked_at = ? WHERE id = ?", [new Date(), d.id]);
+      notifyDirectors({ type: "field-drop-update" });
+    }
+    return res.json({ success: true, unlocked: true, content: d.content, from: d.created_by, burnAfter: !!d.burn_after, radius: d.radius_m });
+  }
+  res.json({ success: true, unlocked: false, distance: Math.round(dist / 5) * 5, radius: d.radius_m });
+}));
+
+app.post("/api/field-drops/:id/burn", requireAgent, wrap(async (req, res) => {
+  const rows = await q("SELECT id, recipient FROM field_drops WHERE id = ? AND unlocked_at IS NOT NULL AND burn_after = 1 AND burned_at IS NULL", [req.params.id]);
+  if (!rows[0] || !sameName(rows[0].recipient, req.agent.name)) return res.status(404).json({ success: false });
+  await q("UPDATE field_drops SET burned_at = ? WHERE id = ?", [new Date(), rows[0].id]);
+  notifyDirectors({ type: "field-drop-update" });
+  res.json({ success: true });
 }));
 
 // One chat, oldest first
 app.get("/api/thread/:other", requireAgent, wrap(async (req, res) => {
   const me = req.agent.name, other = req.params.other;
   const rows = await q(
-    `SELECT sender, recipient, content, channel, created_at, read_at FROM messages
-     WHERE (sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?)
+    `SELECT id, sender, recipient, content, channel, self_destruct, created_at, read_at FROM messages
+     WHERE ((sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?)) AND burned_at IS NULL
      ORDER BY created_at ASC`, [me, other, other, me]);
   res.json({ success: true, messages: rows.map((m) => ({ ...m, fromMe: sameName(m.sender, me) })) });
 }));
@@ -559,6 +694,42 @@ app.post("/api/director/dark-mode/reset", requireAgent, requireDirector, wrap(as
   await q("UPDATE agents SET dark_lat = ?, dark_lng = ?, dark_accuracy = ? WHERE agent_name = ?", [la, ln, acc, name]);
   if (await darkSpot(name)) await saveLocation(name, la, ln, acc, new Date());
   res.json({ success: true, lat: la, lng: ln });
+}));
+
+// Burned self-destructing messages (the Director's copy), newest first
+app.get("/api/director/burned", requireAgent, requireDirector, wrap(async (req, res) => {
+  const rows = await q(
+    `SELECT id, sender, recipient, content, created_at, burned_at FROM messages
+     WHERE burned_at IS NOT NULL ORDER BY burned_at DESC LIMIT 50`);
+  res.json({ success: true, messages: rows });
+}));
+
+// Field Drops: plant one, list them all, call one off
+app.post("/api/director/field-drops", requireAgent, requireDirector, wrap(async (req, res) => {
+  const recipient = await activeAgentNamed(req.body?.recipient);
+  const content = String(req.body?.content || "").trim();
+  const la = Number(req.body?.lat), ln = Number(req.body?.lng);
+  const radius = Math.min(500, Math.max(15, Math.round(Number(req.body?.radius) || 50)));
+  if (!recipient || !content) return res.status(400).json({ success: false, message: "Pick an agent and write the message." });
+  if (content.length > 1000) return res.status(400).json({ success: false, message: "Message too long" });
+  if (!validSpot(la, ln)) return res.status(400).json({ success: false, message: "Pick where to hide it." });
+  const r = await q(
+    `INSERT INTO field_drops (created_at, created_by, recipient, content, lat, lng, radius_m, burn_after)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [new Date(), req.agent.name, recipient, content, la, ln, radius, req.body?.burnAfter === false ? 0 : 1]);
+  notifyAgent(recipient, { type: "field-drop" });
+  res.json({ success: true, id: r.insertId });
+}));
+app.get("/api/director/field-drops", requireAgent, requireDirector, wrap(async (req, res) => {
+  const rows = await q("SELECT * FROM field_drops ORDER BY created_at DESC LIMIT 50");
+  res.json({ success: true, drops: rows });
+}));
+app.post("/api/director/field-drops/:id/cancel", requireAgent, requireDirector, wrap(async (req, res) => {
+  const rows = await q("SELECT id, recipient FROM field_drops WHERE id = ? AND unlocked_at IS NULL AND cancelled_at IS NULL", [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ success: false, message: "Only drops nobody has found yet can be called off." });
+  await q("UPDATE field_drops SET cancelled_at = ? WHERE id = ?", [new Date(), rows[0].id]);
+  notifyAgent(rows[0].recipient, { type: "field-drop" });
+  res.json({ success: true });
 }));
 
 // Most recent Locate Agent lookups (newest first)
