@@ -883,7 +883,7 @@ if (IS_DOSSIER) {
               <div class="bubble-row ${m.fromMe ? "mine" : "theirs"}">
                 <div class="bubble">
                   <div class="bubble-text">${escapeHtml(m.content)}</div>
-                  <div class="bubble-time">${escapeHtml(shortTime(m.created_at))}</div>
+                  <div class="bubble-time">${m.channel === "dead_drop" ? '<span class="dead-drop-tag" title="Sent through the Dead Drop (Math Flash Brain Busters cover page)">🪨 Dead Drop</span> · ' : ""}${escapeHtml(shortTime(m.created_at))}</div>
                 </div>
               </div>`;
           }).join("");
@@ -1105,6 +1105,9 @@ if (IS_DOSSIER) {
     }
     el("comms-new").addEventListener("click", startNewChat);
     el("toggle-message-form")?.addEventListener("click", (e) => { e.preventDefault(); startNewChat(); });
+    // Go Undercover: switch to the Math Flash Brain Busters puzzle page (the Dead Drop lives there)
+    el("btn-undercover")?.addEventListener("click", () => { window.location.href = "puzzles.html"; });
+
     el("btn-inbox")?.addEventListener("click", (e) => {
       e.preventDefault();
       openComms();

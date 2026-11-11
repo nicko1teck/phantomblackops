@@ -1448,3 +1448,6 @@ textarea.login-input { min-height: 0; resize: none; }
 .dark-indicator { margin-left: 2px; filter: drop-shadow(0 0 4px rgba(177, 140, 255, 0.9)); }
 
 .nowrap { white-space: nowrap; }
+
+/* Messages sent through the Dead Drop (the Brain Busters cover page) */
+.dead-drop-tag { font-weight: 700; letter-spacing: 0.3px; color: #c9b27a; }

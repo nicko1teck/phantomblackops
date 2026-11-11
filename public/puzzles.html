@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Math Flash Brain Busters | Math &amp; Logic Puzzles</title>
+  <meta name="description" content="Fun math and logic puzzles for 5th graders." />
+  <link rel="stylesheet" href="puzzles.css" />
+</head>
+<body>
+  <header class="bb-header">
+    <div class="bb-brand">
+      <span id="bb-owl" class="bb-logo" aria-hidden="true">🦉</span>
+      <div>
+        <h1>Math Flash Brain Busters</h1>
+        <p class="bb-sub">Math &amp; Logic Puzzles · Grade 5</p>
+      </div>
+    </div>
+    <div class="bb-score" aria-live="polite">
+      <span id="bb-score-text">Score: 0 / 0</span>
+      <span id="bb-stars" class="bb-stars" aria-hidden="true"></span>
+    </div>
+  </header>
+
+  <main class="bb-main">
+    <div class="bb-intro">
+      <p>Solve each puzzle, then press <strong>Check</strong>. Wrong? Try again! Done? On to the next page.</p>
+      <div class="bb-nav">
+        <span id="bb-page-no" class="bb-page-no">Page 1</span>
+        <button id="bb-next" class="bb-btn bb-btn-alt bb-next" type="button">Next Page ▶</button>
+      </div>
+    </div>
+    <div id="bb-pages"></div>
+  </main>
+
+  <footer class="bb-footer">
+    Keep your brain buzzing!
+    <button id="bb-star" class="bb-star" type="button" aria-label="Favorite">⭐</button>
+    © Math Flash Brain Busters
+  </footer>
+
+  <!-- Scratch pad -->
+  <aside id="scratch" class="scratch" hidden aria-label="Scratch pad">
+    <div class="scratch-head">
+      <span>✏️ Scratch Pad</span>
+      <span class="scratch-head-btns">
+        <a id="scratch-hq" class="scratch-mini" href="dossier.html" title="Back">↩</a>
+        <button id="scratch-close" class="scratch-mini" type="button" title="Close">✕</button>
+      </span>
+    </div>
+    <select id="scratch-to" class="scratch-to" aria-label="To"></select>
+    <div id="scratch-note" class="scratch-note"></div>
+    <div id="scratch-chips" class="scratch-chips"></div>
+    <form id="scratch-form" class="scratch-form" autocomplete="off">
+      <input id="scratch-input" class="scratch-input" type="text" maxlength="500" placeholder="jot it down…" />
+      <button class="scratch-send" type="submit" title="Done">✓</button>
+    </form>
+  </aside>
+
+  <script src="quick-messages.js"></script>
+  <script src="puzzles.js"></script>
+</body>
+</html>

@@ -55,6 +55,10 @@ async function addColumn(table, column, ddl, afterAdd) {
 }
 
 async function upgradeDatabase() {
+  // Which channel a message came through: "comms" (the dossier) or "dead_drop"
+  // (sent from the Brain Busters puzzle page cover). Old messages are all "comms".
+  await addColumn("messages", "channel", "VARCHAR(16) NOT NULL DEFAULT 'comms'");
+
   // Unread badges (old messages count as already read)
   await addColumn("messages", "read_at", "DATETIME NULL", () =>
     q("UPDATE messages SET read_at = created_at WHERE read_at IS NULL"));
@@ -356,9 +360,11 @@ app.post("/api/messages", requireAgent, wrap(async (req, res) => {
   const recipient = await activeAgentNamed(req.body?.recipient);
   if (!recipient || !content) return res.status(400).json({ success: false, message: "Missing recipient or message" });
   if (content.length > 2000) return res.status(400).json({ success: false, message: "Message too long" });
+  const channel = req.body?.channel === "dead_drop" ? "dead_drop" : "comms";
 
-  const result = await q("INSERT INTO messages (sender, recipient, content) VALUES (?, ?, ?)", [req.agent.name, recipient, content]);
-  notifyAgent(recipient, { type: "new-message", from: req.agent.name });
+  const result = await q("INSERT INTO messages (sender, recipient, content, channel) VALUES (?, ?, ?, ?)",
+    [req.agent.name, recipient, content, channel]);
+  notifyAgent(recipient, { type: "new-message", from: req.agent.name, channel });
   res.json({ success: true, messageId: result.insertId });
 }));
 
@@ -366,7 +372,7 @@ app.post("/api/messages", requireAgent, wrap(async (req, res) => {
 app.get("/api/conversations", requireAgent, wrap(async (req, res) => {
   const me = req.agent.name;
   const rows = await q(
-    `SELECT sender, recipient, content, created_at, read_at FROM messages
+    `SELECT sender, recipient, content, channel, created_at, read_at FROM messages
      WHERE sender = ? OR recipient = ? ORDER BY created_at ASC`, [me, me]);
 
   const byPartner = new Map();
@@ -377,6 +383,7 @@ app.get("/api/conversations", requireAgent, wrap(async (req, res) => {
     if (!key || key === me.toLowerCase()) continue;
     const c = byPartner.get(key) || { agent: partner, unread: 0 };
     c.lastMessage = m.content;
+    c.lastChannel = m.channel || "comms";
     c.lastFromMe = fromMe;
     c.lastAt = m.created_at;
     if (!fromMe && !m.read_at) c.unread += 1;
@@ -386,11 +393,19 @@ app.get("/api/conversations", requireAgent, wrap(async (req, res) => {
   res.json({ success: true, conversations });
 }));
 
+// The newest message sent TO me, from anyone (the Brain Busters reveal shows it)
+app.get("/api/messages/latest-incoming", requireAgent, wrap(async (req, res) => {
+  const rows = await q(
+    `SELECT id, sender, content, channel, created_at, read_at FROM messages
+     WHERE recipient = ? ORDER BY created_at DESC, id DESC LIMIT 1`, [req.agent.name]);
+  res.json({ success: true, message: rows[0] || null });
+}));
+
 // One chat, oldest first
 app.get("/api/thread/:other", requireAgent, wrap(async (req, res) => {
   const me = req.agent.name, other = req.params.other;
   const rows = await q(
-    `SELECT sender, recipient, content, created_at, read_at FROM messages
+    `SELECT sender, recipient, content, channel, created_at, read_at FROM messages
      WHERE (sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?)
      ORDER BY created_at ASC`, [me, other, other, me]);
   res.json({ success: true, messages: rows.map((m) => ({ ...m, fromMe: sameName(m.sender, me) })) });
