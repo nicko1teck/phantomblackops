@@ -237,6 +237,7 @@
     latest = null;
     pad.hidden = true;
     star.classList.remove("has-news");
+    $("bb-owl").classList.remove("has-news");
   }
 
   // Doing puzzles counts as activity, so the Phantom session doesn't time out (at most once a minute)
@@ -254,6 +255,7 @@
     const convos = data.conversations || [];
     const unread = convos.reduce((n, c) => n + (c.unread || 0), 0);
     star.classList.toggle("has-news", unread > 0); // a quiet "something's waiting"
+    $("bb-owl").classList.toggle("has-news", unread > 0); // ...and the owl's eyebrows turn orange
     return convos;
   }
   async function refreshLatest() {

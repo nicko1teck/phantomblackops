@@ -29,7 +29,11 @@ body {
   color: #fff;
 }
 .bb-brand { display: flex; align-items: center; gap: 12px; }
-.bb-logo { font-size: 44px; line-height: 1; }
+.bb-logo { font-size: 44px; line-height: 1; display: inline-flex; }
+.owl { display: block; filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.18)); }
+.owl-brow { fill: #5c3a1e; transition: fill 1.2s ease; }
+/* a message is waiting: the owl's eyebrows quietly turn orange */
+.bb-logo.has-news .owl-brow { fill: #ff8a1c; }
 .bb-header h1 { margin: 0; font-size: 1.8rem; letter-spacing: 0.5px; }
 .bb-sub { margin: 2px 0 0; opacity: 0.9; }
 .bb-score {
