@@ -1424,16 +1424,40 @@ if (IS_DOSSIER) {
             ? `🟢 Live · ${escapeHtml(timeAgo(loc.updated_at))}${loc.accuracy ? ` · within ${Math.round(loc.accuracy)} m` : ""}`
             : `🛰️ Agent off grid. Last seen ${escapeHtml(timeAgo(loc.updated_at))} here.`}</div>
         </div></div>
-        ${isMe ? "" : `<div class="card-actions">
-          <button class="card-btn" data-act="msg" type="button">💬 Message</button>
-          <button class="card-btn" data-act="call" type="button">🎥 Call</button></div>`}`);
+        <div class="card-actions">
+          <button class="card-btn" data-act="scan" type="button">🏢 Building Scan</button>
+          ${isMe ? "" : `<button class="card-btn" data-act="msg" type="button">💬 Message</button>
+          <button class="card-btn" data-act="call" type="button">🎥 Call</button>`}</div>`);
       locateCard.dataset.agent = name;
+      locateCard.dataset.lat = loc.lat;
+      locateCard.dataset.lng = loc.lng;
+    }
+
+    // Building Scan: 3D wireframe of the buildings around the located agent
+    async function buildingScan(agent, lat, lng, btn) {
+      if (!window.ImfScan || !isFinite(lat) || !isFinite(lng)) return;
+      if (btn) { btn.disabled = true; btn.textContent = "🏢 Scanning..."; }
+      let buildings = [];
+      try {
+        const d = await api(`/api/buildings?lat=${lat}&lng=${lng}`);
+        buildings = d.buildings || [];
+      } catch (err) { console.error("Building scan error:", err); }
+      if (!buildings.length) {
+        if (btn) { btn.disabled = false; btn.textContent = "🏢 No blueprints on file here"; }
+        return;
+      }
+      if (btn) { btn.disabled = false; btn.textContent = "🏢 Building Scan"; }
+      window.ImfScan.open({ lat, lng, agent: norm(agent) === norm(me) ? "You" : agent, buildings });
     }
 
     locateCard.addEventListener("click", (e) => {
       const act = e.target.closest(".card-btn")?.dataset.act;
       const agent = locateCard.dataset.agent;
       if (!act || !agent) return;
+      if (act === "scan") {
+        buildingScan(agent, Number(locateCard.dataset.lat), Number(locateCard.dataset.lng), e.target.closest(".card-btn"));
+        return;
+      }
       closeLocate();
       if (act === "msg") openThread(agent);
       if (act === "call") window.imfPrepareCall?.(agent);
