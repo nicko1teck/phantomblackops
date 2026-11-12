@@ -440,7 +440,12 @@ app.post("/api/messages/:id/burn", requireAgent, wrap(async (req, res) => {
 // (free to use with credit). Cached so we don't hit their server repeatedly.
 // ---------------------------------------------------------
 const buildingCache = new Map(); // "lat,lng" rounded to ~50 m -> { at, buildings }
-const OVERPASS = process.env.OVERPASS_URL || "https://overpass-api.de/api/interpreter";
+// Free public Overpass servers; if one is busy or slow, try the next.
+const OVERPASS_SERVERS = process.env.OVERPASS_URL
+  ? [process.env.OVERPASS_URL]
+  : ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
+// EC2 often has no IPv6 route; prefer IPv4 so lookups don't hang
+require("dns").setDefaultResultOrder?.("ipv4first");
 function guessHeight(tags) {
   const num = (v) => { const n = parseFloat(String(v || "").replace(",", ".")); return Number.isFinite(n) && n > 0 ? n : null; };
   const h = num(tags.height), lv = num(tags["building:levels"]);
@@ -456,21 +461,24 @@ app.get("/api/buildings", requireAgent, wrap(async (req, res) => {
   const key = `${la.toFixed(3)},${ln.toFixed(3)}`;
   const hit = buildingCache.get(key);
   if (hit && Date.now() - hit.at < 7 * 86400e3) return res.json({ success: true, cached: true, buildings: hit.buildings });
-  const query = `[out:json][timeout:20];way["building"](around:220,${la},${ln});out tags geom 400;`;
-  let data;
-  try {
-    const r = await fetch(OVERPASS, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "PhantomBlackOps/1.0 (family app)" },
-      body: "data=" + encodeURIComponent(query),
-      signal: AbortSignal.timeout(25000),
-    });
-    if (!r.ok) throw new Error(`Overpass ${r.status}`);
-    data = await r.json();
-  } catch (e) {
-    console.warn("⚠️  Building lookup failed:", e.message);
-    return res.status(502).json({ success: false, message: "Couldn't reach the map service. Try again in a minute." });
+  const query = `[out:json][timeout:10];way["building"](around:220,${la},${ln});out tags geom 400;`;
+  let data = null;
+  for (const url of OVERPASS_SERVERS) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "PhantomBlackOps/1.0 (family app)" },
+        body: "data=" + encodeURIComponent(query),
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      data = await r.json();
+      break;
+    } catch (e) {
+      console.warn(`⚠️  Building lookup failed (${new URL(url).host}):`, e.message);
+    }
   }
+  if (!data) return res.status(502).json({ success: false, message: "Couldn't reach the map service. Try again in a minute." });
   const buildings = (data.elements || [])
     .filter((el) => el.type === "way" && Array.isArray(el.geometry) && el.geometry.length >= 3)
     .map((el) => ({

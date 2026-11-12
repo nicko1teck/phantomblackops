@@ -1437,13 +1437,16 @@ if (IS_DOSSIER) {
     async function buildingScan(agent, lat, lng, btn) {
       if (!window.ImfScan || !isFinite(lat) || !isFinite(lng)) return;
       if (btn) { btn.disabled = true; btn.textContent = "🏢 Scanning..."; }
-      let buildings = [];
+      let buildings = null;
       try {
         const d = await api(`/api/buildings?lat=${lat}&lng=${lng}`);
         buildings = d.buildings || [];
       } catch (err) { console.error("Building scan error:", err); }
-      if (!buildings.length) {
-        if (btn) { btn.disabled = false; btn.textContent = "🏢 No blueprints on file here"; }
+      if (!buildings || !buildings.length) {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = buildings ? "🏢 No blueprints on file here" : "📡 Satellite busy · tap to retry";
+        }
         return;
       }
       if (btn) { btn.disabled = false; btn.textContent = "🏢 Building Scan"; }
