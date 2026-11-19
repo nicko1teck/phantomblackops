@@ -40,6 +40,21 @@
   </header>
 
   <main class="bb-main">
+    <!-- Course code: signing in turns on progress tracking (and, quietly, the scratch pad) -->
+    <div id="bb-course" class="bb-course">
+      <form id="bb-course-form" class="bb-course-form" autocomplete="off">
+        <label for="bb-course-code" class="bb-course-label">Course code</label>
+        <input id="bb-course-code" class="bb-course-input" type="text" maxlength="24" placeholder="ABC123"
+               autocapitalize="characters" autocorrect="off" spellcheck="false" />
+        <button class="bb-btn bb-course-go" type="submit">Go</button>
+        <span class="bb-course-hint">(enter your course code to track your progress)</span>
+        <span id="bb-course-msg" class="bb-course-msg" role="status"></span>
+      </form>
+      <div id="bb-course-on" class="bb-course-on" hidden>
+        <span>📊 Tracking your progress ✓</span>
+        <button id="bb-signout" class="bb-btn bb-btn-alt bb-signout" type="button">Sign out</button>
+      </div>
+    </div>
     <div class="bb-intro">
       <p>Solve each puzzle, then press <strong>Check</strong>. Wrong? Try again! Done? On to the next page.</p>
       <div class="bb-nav">
@@ -52,7 +67,7 @@
 
   <footer class="bb-footer">
     Keep your brain buzzing!
-    <button id="bb-star" class="bb-star" type="button" aria-label="Favorite">⭐</button>
+    <button id="bb-star" class="bb-star" type="button" aria-label="Favorite" hidden>⭐</button>
     © Math Flash Brain Busters
   </footer>
 

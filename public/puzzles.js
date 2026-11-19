@@ -1,9 +1,7 @@
 /* =========================================================
-   BRAIN BUSTERS: real, working grade-5 puzzles...
-   ...and the Dead Drop. Tap the little footer star to open the
-   "Scratch Pad", which sends and receives Phantom messages.
-   Those messages are saved with channel "dead_drop".
-   Nothing secret shows unless the agent is logged in to Phantom.
+   MATH FLASH BRAIN BUSTERS: real, working grade-5 puzzles.
+   A course code turns on progress tracking and the scratch pad
+   (footer star). Sign out turns them off again instantly.
    ========================================================= */
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -212,35 +210,80 @@
   nextPage();
 
   // ---------------------------------------------------------
-  // The Dead Drop
+  // Notes
   //   OUT: tap the footer star -> Scratch Pad (send only)
   //   IN:  press and hold the owl (or hold the ` key) -> the page's own letters
   //        fly together to spell the newest incoming message; let go and they fly home
   // ---------------------------------------------------------
   const star = $("bb-star"), pad = $("scratch"), to = $("scratch-to"), input = $("scratch-input"), note = $("scratch-note");
-  let me = null;        // logged-in agent, or null (then nothing secret works)
+  let me = null;        // signed-in student, or null (then it's just a puzzle page)
+  let sock = null;      // live connection while signed in
   let latest = null;    // newest incoming message
 
   async function api(path, opts = {}) {
     const { background, ...rest } = opts;
     const res = await fetch(path, {
       ...rest,
-      headers: { "Content-Type": "application/json", ...(background ? { "X-IMF-Background": "1" } : {}), ...(rest.headers || {}) },
+      headers: { "Content-Type": "application/json", ...(background ? { "X-Background": "1" } : {}), ...(rest.headers || {}) },
     });
     if (res.status === 401) { goneQuiet(); throw new Error("signed out"); }
     return res.json();
   }
 
-  // Signed out or session over: hide everything secret, never show a Phantom screen
+  // Signed out or session over: back to a plain puzzle page
   function goneQuiet() {
     me = null;
     latest = null;
     pad.hidden = true;
+    input.value = "";
+    note.textContent = "";
+    star.hidden = true;
     star.classList.remove("has-news");
     $("bb-owl").classList.remove("has-news");
+    courseUi(false);
+    if (sock) { const s = sock; sock = null; try { s.close(); } catch {} }
   }
 
-  // Doing puzzles counts as activity, so the Phantom session doesn't time out (at most once a minute)
+  // ---- Course code: sign in / sign out ----
+  const courseForm = $("bb-course-form"), courseOn = $("bb-course-on"), courseCode = $("bb-course-code"), courseMsg = $("bb-course-msg");
+  function courseUi(on) {
+    courseForm.hidden = on;
+    courseOn.hidden = !on;
+    if (on) { courseCode.value = ""; courseMsg.textContent = ""; }
+  }
+  courseForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const code = courseCode.value.trim();
+    if (!code) { courseCode.focus(); return; }
+    courseMsg.textContent = "";
+    try {
+      const r = await fetch("/api/course/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
+      const d = await r.json().catch(() => ({}));
+      if (!d.success) { courseMsg.textContent = d.message || "That course code wasn't found."; return; }
+      courseCode.blur();
+      start();
+    } catch {
+      courseMsg.textContent = "Couldn't connect. Try again.";
+    }
+  });
+  courseCode.addEventListener("input", () => { courseMsg.textContent = ""; });
+
+  // SIGN OUT: one tap, instantly. Message gone, pad closed and emptied, signed out.
+  function signOut() {
+    stopAutoHide();
+    pressAt = 0;
+    document.body.classList.add("dd-instant");
+    revealed = false;
+    finishCleanup();
+    document.body.classList.remove("dd-reveal");
+    if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+    goneQuiet();
+    fetch("/api/logout", { method: "POST" }).catch(() => {});
+    requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.remove("dd-instant")));
+  }
+  $("bb-signout").addEventListener("click", signOut);
+
+  // Doing puzzles counts as activity, so the session doesn't time out (at most once a minute)
   let lastPing = 0;
   ["pointerdown", "keydown"].forEach((ev) => document.addEventListener(ev, () => {
     if (!me || Date.now() - lastPing < 60000) return;
@@ -280,7 +323,7 @@
   });
   $("scratch-close").addEventListener("click", () => { pad.hidden = true; });
 
-  const quick = (window.IMF_QUICK_MESSAGES && window.IMF_QUICK_MESSAGES.starterFavorites) || ["👋 Hi!", "✅ Yes", "❌ No", "👍 OK"];
+  const quick = (window.QUICK_MESSAGES && window.QUICK_MESSAGES.starterFavorites) || ["👋 Hi!", "✅ Yes", "❌ No", "👍 OK"];
   $("scratch-chips").innerHTML = quick.map((t) => `<button type="button" class="scratch-chip">${esc(t)}</button>`).join("");
   $("scratch-chips").addEventListener("click", (e) => {
     const b = e.target.closest(".scratch-chip");
@@ -453,12 +496,34 @@
     }
   }
 
-  // Press and hold the owl (finger or mouse)...
+  // The owl works two ways:
+  //   HOLD it (finger or mouse): message shows while held, flies home on release.
+  //   CLICK it (a quick tap, or an eye-gaze dwell click): message STAYS up, then
+  //     the next click anywhere hides it instantly, or it flies home by itself after AUTO_HIDE_MS.
   const owl = $("bb-owl");
-  owl.addEventListener("pointerdown", (e) => { if (!me || !latest) return; e.preventDefault(); reveal(); });
+  const QUICK_CLICK_MS = 400;
+  const AUTO_HIDE_MS = 20000;
+  let pressAt = 0, sticky = false, autoHide = null;
+  const stopAutoHide = () => { clearTimeout(autoHide); autoHide = null; sticky = false; };
+  owl.addEventListener("pointerdown", (e) => {
+    if (!me) return;
+    e.preventDefault();
+    if (revealed) { stopAutoHide(); unreveal(); return; } // clicking the owl again puts it away
+    if (!latest) return;
+    pressAt = Date.now();
+    sticky = false;
+    reveal();
+  });
   owl.addEventListener("contextmenu", (e) => e.preventDefault());
-  ["pointerup", "pointercancel"].forEach((ev) => window.addEventListener(ev, unreveal));
-  window.addEventListener("blur", unreveal);
+  ["pointerup", "pointercancel"].forEach((ev) => window.addEventListener(ev, () => {
+    if (!revealed || sticky || !pressAt) return;
+    if (Date.now() - pressAt < QUICK_CLICK_MS) {
+      sticky = true; // a click, not a hold: leave it up
+      autoHide = setTimeout(() => { stopAutoHide(); unreveal(); }, AUTO_HIDE_MS);
+    } else unreveal();
+    pressAt = 0;
+  }));
+  window.addEventListener("blur", () => { stopAutoHide(); unreveal(); });
   // The ` key by its position on the keyboard (some Windows layouts treat ` as a
   // "dead key" for accents, so the typed character isn't reported, but the key is)
   const isRevealKey = (e) => e.code === "Backquote" || e.key === "`";
@@ -466,14 +531,18 @@
   window.addEventListener("keydown", (e) => {
     if (!isRevealKey(e) || e.repeat || e.target.closest?.("input, textarea, select")) return;
     e.preventDefault();
+    if (revealed) return;
+    pressAt = 0;
     reveal();
   });
-  window.addEventListener("keyup", (e) => { if (isRevealKey(e)) unreveal(); });
+  window.addEventListener("keyup", (e) => { if (isRevealKey(e)) { stopAutoHide(); unreveal(); } });
 
   // ---- EMERGENCY: Next Page ----
   // Instantly: the message vanishes, the scratch pad closes and empties,
   // and the waiting page appears, as if he just moved on to the next worksheet.
   function emergencyNext() {
+    stopAutoHide();
+    pressAt = 0;
     document.body.classList.add("dd-instant"); // no fades, no flying
     revealed = false;
     finishCleanup();
@@ -492,27 +561,37 @@
   // mid-reveal on a touchscreen: tap anywhere with another finger
   window.addEventListener("pointerdown", (e) => { if (revealed && !e.target.closest("#bb-owl")) emergencyNext(); });
 
-  // Live news over the same connection the dossier uses
+  // Live news while signed in
   function connect() {
+    if (!me || sock) return;
     const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`);
-    ws.addEventListener("open", () => ws.send(JSON.stringify({ type: "register", agent: me })));
+    sock = ws;
     ws.addEventListener("message", (ev) => {
       let msg; try { msg = JSON.parse(ev.data); } catch { return; }
-      if (msg.type === "auth-required") { goneQuiet(); ws.close(); return; }
+      if (msg.type === "auth-required") { goneQuiet(); return; }
       if (msg.type === "new-message") { refreshLatest(); refreshNews(); }
     });
-    ws.addEventListener("close", () => { if (me) setTimeout(connect, 3000); });
+    ws.addEventListener("close", () => {
+      if (sock !== ws) return; // signed out on purpose
+      sock = null;
+      if (me) setTimeout(connect, 3000);
+    });
   }
 
-  // Are we a logged-in agent? (quietly; a visitor just sees a puzzle page)
-  fetch("/api/me", { headers: { "X-IMF-Background": "1" } })
-    .then((r) => (r.ok ? r.json() : null))
-    .then((d) => {
-      if (!d || !d.agent) return;
-      me = d.agent.agent_name;
-      refreshNews();
-      refreshLatest();
-      connect();
-    })
-    .catch(() => {});
+  // Signed in? (quietly; a visitor just sees a puzzle page)
+  function start() {
+    return fetch("/api/me", { headers: { "X-Background": "1" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d || !d.agent) { goneQuiet(); return; }
+        me = d.agent.agent_name;
+        star.hidden = false;
+        courseUi(true);
+        refreshNews();
+        refreshLatest();
+        connect();
+      })
+      .catch(() => {});
+  }
+  start();
 })();

@@ -895,7 +895,9 @@ if (IS_DOSSIER) {
               <div class="bubble-row ${m.fromMe ? "mine" : "theirs"}">
                 <div class="bubble">
                   <div class="bubble-text">${escapeHtml(m.content)}</div>
-                  <div class="bubble-time">${m.self_destruct ? '<span class="bomb-tag">💣 burns after reading</span> · ' : ""}${m.channel === "dead_drop" ? '<span class="dead-drop-tag" title="Sent through the Dead Drop (Math Flash Brain Busters cover page)">🪨 Dead Drop</span> · ' : ""}${escapeHtml(shortTime(m.created_at))}</div>
+                  <div class="bubble-time">${m.self_destruct ? '<span class="bomb-tag">💣 burns after reading</span> · ' : ""}${m.channel === "dead_drop" ? (m.sent_from === "math_site"
+                    ? '<span class="dead-drop-tag" title="Sent from the math practice site (its own domain)">🧮 Math site</span> · '
+                    : '<span class="dead-drop-tag" title="Sent through the Dead Drop (Math Flash Brain Busters cover page)">🪨 Dead Drop</span> · ') : ""}${escapeHtml(shortTime(m.created_at))}</div>
                 </div>
               </div>`;
           }).join("");
@@ -1014,7 +1016,7 @@ if (IS_DOSSIER) {
     // reply box (then tap Send). Favorites learn what gets used.
     // The message list lives in quick-messages.js
     // =====================================================
-    const QUICK = window.IMF_QUICK_MESSAGES || { starterFavorites: [], categories: [] };
+    const QUICK = window.QUICK_MESSAGES || { starterFavorites: [], categories: [] };
     const quickPanel = el("quick-panel");
     const quickTabs = el("quick-tabs");
     const quickGrid = el("quick-grid");
@@ -1651,12 +1653,14 @@ if (IS_DOSSIER) {
           dirList.innerHTML = agents.map((a) => {
             const name = escapeHtml(a.agent_name);
             let actions = "";
-            if (a.is_director) actions = `<span class="dir-note">That's you</span>`;
+            const codeBtn = `<button class="comms-btn" data-act="course-code" type="button">🧮 ${a.has_code ? "New" : "Set"} course code</button>`;
+            if (a.is_director) actions = `<span class="dir-note">That's you</span>${codeBtn}`;
             else if (a.status === "pending") actions = `
               <button class="card-btn" data-act="approve" type="button">✅ Approve</button>
               <button class="comms-btn" data-act="reject" type="button">✕ Reject</button>`;
             else actions = `
               <button class="comms-btn" data-act="reset-pin" type="button">🔢 Set PIN</button>
+              ${a.status === "active" ? codeBtn : ""}
               ${a.status === "active"
                 ? `<button class="comms-btn" data-act="deactivate" type="button">Switch off</button>`
                 : `<button class="comms-btn" data-act="activate" type="button">Switch on</button>`}`;
@@ -1665,7 +1669,7 @@ if (IS_DOSSIER) {
                 ${avatar(a.agent_name)}
                 <div class="dir-info">
                   <div class="convo-name">${name}${a.is_director ? " 🎖️" : ""}</div>
-                  <div class="dir-sub">${statusLabel[a.status] || escapeHtml(a.status)}${!a.is_director && !a.has_pin ? " · no PIN yet" : ""}
+                  <div class="dir-sub">${statusLabel[a.status] || escapeHtml(a.status)}${!a.is_director && !a.has_pin ? " · no PIN yet" : ""}${a.has_code ? " · 🧮 has course code" : ""}
                     ${a.email ? ` · ${escapeHtml(a.email)}` : ""}</div>
                   ${a.bio ? `<div class="dir-sub">“${escapeHtml(a.bio)}”</div>` : ""}
                 </div>
@@ -1692,12 +1696,18 @@ if (IS_DOSSIER) {
           if (!/^\d{4}$/.test(pin.trim())) return alert("PIN must be exactly 4 numbers.");
           body = { pin: pin.trim() };
         }
+        if (act === "course-code") {
+          const code = prompt(`Course code for ${agent} on the math site.\nType one (6-20 letters or numbers), or leave blank for a random one.\nThis replaces any old code.`);
+          if (code === null) return;
+          body = { code: code.trim() };
+        }
         const res = await api(`/api/director/agents/${encodeURIComponent(agent)}/${act}`, {
           method: "POST",
           body: JSON.stringify(body),
         }).catch(() => ({}));
         if (!res.success) alert(res.message || "That didn't work.");
         else if (act === "reset-pin") alert(`${agent}'s PIN is set.`);
+        else if (act === "course-code") alert(`${agent}'s course code is:\n\n${res.code}\n\nWrite it down. It won't be shown again (you can always make a new one).`);
         loadDirector();
       });
 

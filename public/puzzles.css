@@ -1,4 +1,4 @@
-/* Brain Busters: a friendly kids' puzzle page (the cover for the Dead Drop) */
+/* Math Flash Brain Busters: grade-5 math and logic puzzles */
 :root {
   --bg: #f4f8ff;
   --ink: #23324a;
@@ -246,3 +246,21 @@ body.dd-reveal .scratch { opacity: 0; pointer-events: none; }
 .bb-page[hidden] { display: none; }
 /* emergency swap: no transitions at all */
 body.dd-instant .bb-header, body.dd-instant .bb-main, body.dd-instant .bb-footer, body.dd-instant .scratch { transition: none !important; }
+
+/* Course code bar */
+.bb-course { margin-bottom: 14px; }
+.bb-course-form, .bb-course-on {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px;
+  background: var(--card); border: 2px solid var(--line); border-radius: 12px; padding: 8px 12px;
+}
+.bb-course-on[hidden], .bb-course-form[hidden] { display: none; }
+.bb-course-label { font-weight: 700; }
+.bb-course-input {
+  font: inherit; font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
+  width: 9.5em; padding: 9px 10px; border: 2px solid var(--line); border-radius: 8px;
+}
+.bb-course-go, .bb-signout { min-height: 44px; }
+.bb-course-hint { color: var(--muted); font-size: 0.92rem; }
+.bb-course-msg { font-weight: 700; color: var(--red); }
+.bb-course-on span { font-weight: 700; color: var(--green); margin-right: auto; }
+.bb-signout { min-width: 120px; }

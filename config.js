@@ -38,4 +38,6 @@ module.exports = {
   DIRECTOR: get("DIRECTOR", ""),
   SNS_TOPIC_ARN: get("SNS_TOPIC_ARN", ""), // where app events are announced (notify.js); blank = off
   SESSION_SECRET: secret,
+  // The math practice site's own domain(s), comma-separated, e.g. "mathsite.com,www.mathsite.com"
+  MATH_HOSTS: String(get("MATH_HOSTS", "")).split(",").map((h) => h.trim().toLowerCase()).filter(Boolean),
 };

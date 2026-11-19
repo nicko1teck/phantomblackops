@@ -8,7 +8,7 @@
      messages - the buttons (put an emoji first, it's easier to spot)
    Save the file and refresh the page to see changes.
    ========================================================= */
-window.IMF_QUICK_MESSAGES = {
+window.QUICK_MESSAGES = {
   // Shown in the "Favorites" tab until real favorites are learned
   starterFavorites: [
     "👋 Hi!",

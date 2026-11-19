@@ -20,6 +20,42 @@ const { announce } = require("./notify");
 const app = express();
 app.set("trust proxy", 1); // so https is detected correctly behind nginx on EC2
 app.use(express.json({ limit: "20kb" }));
+
+// ---------------------------------------------------------
+// The math practice site: a second domain pointed at this same app.
+// On that domain ONLY the math page and the few API calls it uses exist;
+// everything else is a plain 404, so nothing there points back to this app.
+// ---------------------------------------------------------
+const hostOf = (req) => String(req.headers.host || "").split(":")[0].toLowerCase();
+const isMathSite = (req) => config.MATH_HOSTS.includes(hostOf(req));
+const MATH_FILES = new Set(["/puzzles.css", "/puzzles.js", "/quick-messages.js"]);
+const MATH_API = [
+  ["POST", /^\/api\/course\/join$/],
+  ["POST", /^\/api\/logout$/],
+  ["GET", /^\/api\/me$/],
+  ["GET", /^\/api\/agents$/],
+  ["GET", /^\/api\/conversations$/],
+  ["GET", /^\/api\/messages\/latest-incoming$/],
+  ["POST", /^\/api\/messages$/],
+  ["POST", /^\/api\/messages\/\d+\/burn$/],
+  ["POST", /^\/api\/thread\/[^/]+\/read$/],
+];
+// The puzzle page minus its link back into the app
+const mathPageHtml = () => require("fs").readFileSync(path.join(__dirname, "public", "puzzles.html"), "utf8")
+  .replace(/\s*<a id="scratch-hq"[^>]*>[\s\S]*?<\/a>/, "");
+app.use((req, res, next) => {
+  if (!isMathSite(req)) return next();
+  if (req.method === "GET" && (req.path === "/" || req.path === "/index.html")) {
+    res.set("Cache-Control", "no-cache");
+    return res.type("html").send(mathPageHtml());
+  }
+  if (req.method === "GET" && MATH_FILES.has(req.path)) {
+    return res.sendFile(path.join(__dirname, "public", req.path.slice(1)), { headers: { "Cache-Control": "no-cache" } });
+  }
+  if (MATH_API.some(([m, re]) => m === req.method && re.test(req.path))) return next();
+  res.status(404).type("text").send("Not found");
+});
+
 app.use(express.static(path.join(__dirname, "public")));
 
 // ---------------------------------------------------------
@@ -62,6 +98,10 @@ async function upgradeDatabase() {
   // Self-destructing messages: hidden from both agents once burned (the Director keeps a copy)
   await addColumn("messages", "self_destruct", "TINYINT NOT NULL DEFAULT 0");
   await addColumn("messages", "burned_at", "DATETIME NULL");
+  // Which front door a message came through: NULL = this app, 'math_site' = the math practice domain
+  await addColumn("messages", "sent_from", "VARCHAR(16) NULL");
+  // Course code for the math site: stored only as a keyed hash, never the code itself
+  await addColumn("agents", "course_code_key", "VARCHAR(64) NULL");
 
   // Field Drops: messages the Director hides at a real place; they unlock when the agent gets there
   await q(`
@@ -165,6 +205,8 @@ const sameName = (a, b) => String(a || "").trim().toLowerCase() === String(b || 
 //   - no Max-Age, so the browser drops it when it closes
 // ---------------------------------------------------------
 const COOKIE = "imf_session";
+const MATH_COOKIE = "mfb_progress"; // the math site's own cookie, with a math-sounding name
+const cookieName = (req) => (isMathSite(req) ? MATH_COOKIE : COOKIE);
 const IDLE_MINUTES = Number(process.env.IDLE_MINUTES) || 10; // env override is for testing
 const MAX_HOURS = 12;
 
@@ -197,7 +239,7 @@ function getCookie(req, name) {
   return null;
 }
 function setLoginCookie(req, res, agentName, loginAt) {
-  res.cookie(COOKIE, makeToken(agentName, loginAt), {
+  res.cookie(cookieName(req), makeToken(agentName, loginAt), {
     httpOnly: true,
     sameSite: "lax",
     secure: req.secure, // true once on https
@@ -208,7 +250,7 @@ function setLoginCookie(req, res, agentName, loginAt) {
 // Look up the logged-in agent (cached briefly so it's fast)
 const agentCache = new Map();
 async function agentFromRequest(req) {
-  const token = readToken(getCookie(req, COOKIE));
+  const token = readToken(getCookie(req, cookieName(req)));
   if (!token) return null;
   const name = token.name;
   const hit = agentCache.get(name);
@@ -230,13 +272,13 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 const requireAgent = wrap(async (req, res, next) => {
   const agent = await agentFromRequest(req);
   if (!agent) {
-    res.clearCookie(COOKIE, { path: "/" });
+    res.clearCookie(cookieName(req), { path: "/" });
     return res.status(401).json({ success: false, message: "Please log in" });
   }
   req.agent = agent;
   // Real activity pushes the 10-minute idle timer forward. Automatic background
   // requests (location updates, refresh checks) send X-IMF-Background and don't.
-  if (req.get("X-IMF-Background") !== "1") setLoginCookie(req, res, agent.name, agent.loginAt);
+  if (req.get("X-IMF-Background") !== "1" && req.get("X-Background") !== "1") setLoginCookie(req, res, agent.name, agent.loginAt);
   next();
 });
 const requireDirector = (req, res, next) =>
@@ -312,8 +354,33 @@ app.post("/api/login", wrap(async (req, res) => {
   });
 }));
 
+// ---------------------------------------------------------
+// Course code login (the math site's door). The Director gives each agent a code.
+// Codes are looked up by a keyed hash, so the database never holds the code itself.
+// ---------------------------------------------------------
+const normCode = (c) => String(c || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+const codeKey = (c) => crypto.createHmac("sha256", config.SESSION_SECRET).update("course:" + normCode(c)).digest("hex");
+const codeTries = new Map(); // ip -> { n, until }: 8 wrong codes in a row = 15 minute wait
+app.post("/api/course/join", wrap(async (req, res) => {
+  const ip = req.ip || "?";
+  const t = codeTries.get(ip) || { n: 0, until: 0 };
+  if (t.until > Date.now()) return res.status(429).json({ success: false, message: "Too many tries. Wait a few minutes." });
+  const code = normCode(req.body?.code);
+  const rows = code.length >= 6 ? await q("SELECT agent_name, status FROM agents WHERE course_code_key = ?", [codeKey(code)]) : [];
+  const a = rows[0];
+  if (!a || a.status !== "active") {
+    t.n += 1;
+    if (t.n >= 8) { t.until = Date.now() + 15 * 60000; t.n = 0; }
+    codeTries.set(ip, t);
+    return res.status(401).json({ success: false, message: "That course code wasn't found." });
+  }
+  codeTries.delete(ip);
+  setLoginCookie(req, res, a.agent_name, Date.now());
+  res.json({ success: true });
+}));
+
 app.post("/api/logout", (req, res) => {
-  res.clearCookie(COOKIE, { path: "/" });
+  res.clearCookie(cookieName(req), { path: "/" });
   res.json({ success: true });
 });
 
@@ -381,11 +448,12 @@ app.post("/api/messages", requireAgent, wrap(async (req, res) => {
   const recipient = await activeAgentNamed(req.body?.recipient);
   if (!recipient || !content) return res.status(400).json({ success: false, message: "Missing recipient or message" });
   if (content.length > 2000) return res.status(400).json({ success: false, message: "Message too long" });
-  const channel = req.body?.channel === "dead_drop" ? "dead_drop" : "comms";
+  const fromMath = isMathSite(req);
+  const channel = fromMath || req.body?.channel === "dead_drop" ? "dead_drop" : "comms";
   const selfDestruct = req.body?.selfDestruct ? 1 : 0;
 
-  const result = await q("INSERT INTO messages (sender, recipient, content, channel, self_destruct) VALUES (?, ?, ?, ?, ?)",
-    [req.agent.name, recipient, content, channel, selfDestruct]);
+  const result = await q("INSERT INTO messages (sender, recipient, content, channel, self_destruct, sent_from) VALUES (?, ?, ?, ?, ?, ?)",
+    [req.agent.name, recipient, content, channel, selfDestruct, fromMath ? "math_site" : null]);
   notifyAgent(recipient, { type: "new-message", from: req.agent.name, channel });
   res.json({ success: true, messageId: result.insertId });
 }));
@@ -548,7 +616,7 @@ app.post("/api/field-drops/:id/burn", requireAgent, wrap(async (req, res) => {
 app.get("/api/thread/:other", requireAgent, wrap(async (req, res) => {
   const me = req.agent.name, other = req.params.other;
   const rows = await q(
-    `SELECT id, sender, recipient, content, channel, self_destruct, created_at, read_at FROM messages
+    `SELECT id, sender, recipient, content, channel, self_destruct, sent_from, created_at, read_at FROM messages
      WHERE ((sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?)) AND burned_at IS NULL
      ORDER BY created_at ASC`, [me, other, other, me]);
   res.json({ success: true, messages: rows.map((m) => ({ ...m, fromMe: sameName(m.sender, me) })) });
@@ -654,8 +722,8 @@ app.get("/api/locations", requireAgent, wrap(async (req, res) => {
 // Director Console
 // ---------------------------------------------------------
 app.get("/api/director/agents", requireAgent, requireDirector, wrap(async (req, res) => {
-  const rows = await q("SELECT agent_name, email, bio, status, is_director, (pin_hash IS NOT NULL) AS has_pin FROM agents ORDER BY status DESC, agent_name ASC");
-  res.json({ success: true, agents: rows.map((r) => ({ ...r, is_director: !!r.is_director, has_pin: !!r.has_pin })) });
+  const rows = await q("SELECT agent_name, email, bio, status, is_director, (pin_hash IS NOT NULL) AS has_pin, (course_code_key IS NOT NULL) AS has_code FROM agents ORDER BY status DESC, agent_name ASC");
+  res.json({ success: true, agents: rows.map((r) => ({ ...r, is_director: !!r.is_director, has_pin: !!r.has_pin, has_code: !!r.has_code })) });
 }));
 
 // Dark Mode on/off. The very first time it's switched on, the Director's location
@@ -755,7 +823,7 @@ app.post("/api/director/agents/:name/:action", requireAgent, requireDirector, wr
   const rows = await q("SELECT agent_name, is_director FROM agents WHERE agent_name = ?", [name]);
   const target = rows[0];
   if (!target) return res.status(404).json({ success: false, message: "No such agent" });
-  if (target.is_director && action !== "reset-pin") {
+  if (target.is_director && action !== "reset-pin" && action !== "course-code") {
     return res.status(400).json({ success: false, message: "Can't change the Director's own account here" });
   }
 
@@ -770,6 +838,17 @@ app.post("/api/director/agents/:name/:action", requireAgent, requireDirector, wr
     if (!isPin(pin)) return res.status(400).json({ success: false, message: "PIN must be 4 numbers" });
     await q("UPDATE agents SET pin_hash = ? WHERE agent_name = ?", [hashSecret(pin), name]);
     misses.delete(name.toLowerCase());
+  } else if (action === "course-code") {
+    // Director types a code, or leaves it blank for a random one. Shown once, here.
+    let code = normCode(req.body?.code);
+    const ABC = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O or 1/I/L mix-ups
+    if (!code) code = Array.from(crypto.randomBytes(6), (b) => ABC[b % ABC.length]).join("");
+    if (code.length < 6 || code.length > 20) return res.status(400).json({ success: false, message: "Course code must be 6 to 20 letters or numbers" });
+    const taken = await q("SELECT agent_name FROM agents WHERE course_code_key = ? AND agent_name <> ?", [codeKey(code), name]);
+    if (taken.length) return res.status(400).json({ success: false, message: "That code is already used. Pick another." });
+    await q("UPDATE agents SET course_code_key = ? WHERE agent_name = ?", [codeKey(code), name]);
+    console.log(`🎖️  Director ${req.agent.name}: course code set for ${target.agent_name}`);
+    return res.json({ success: true, code });
   } else {
     return res.status(400).json({ success: false, message: "Unknown action" });
   }
@@ -826,7 +905,9 @@ wss.on("connection", async (ws, req) => {
   clients.get(key).add(ws);
   safeSend(ws, { type: "registered", agent: agent.name });
 
+  const listenOnly = isMathSite(req); // the math site only hears "new message"; no call signaling
   ws.on("message", (raw) => {
+    if (listenOnly) return;
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     if (msg.type === "register") return; // identity already known from the cookie
