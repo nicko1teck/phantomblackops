@@ -102,6 +102,8 @@ async function upgradeDatabase() {
   await addColumn("messages", "sent_from", "VARCHAR(16) NULL");
   // Course code for the math site: stored only as a keyed hash, never the code itself
   await addColumn("agents", "course_code_key", "VARCHAR(64) NULL");
+  // Eye-gaze mode (math site): one click on the owl shows a message and leaves it up
+  await addColumn("agents", "eye_gaze", "TINYINT NOT NULL DEFAULT 0");
 
   // Field Drops: messages the Director hides at a real place; they unlock when the agent gets there
   await q(`
@@ -410,9 +412,10 @@ app.post("/api/logout", (req, res) => {
 // Who am I? (the dossier asks this first)
 app.get("/api/me", requireAgent, wrap(async (req, res) => {
   const dark = req.agent.isDirector ? await darkSpot(req.agent.name) : null;
+  const eg = await q("SELECT eye_gaze FROM agents WHERE agent_name = ?", [req.agent.name]);
   res.json({
     success: true,
-    agent: { agent_name: req.agent.name, is_director: req.agent.isDirector, dark_mode: !!dark },
+    agent: { agent_name: req.agent.name, is_director: req.agent.isDirector, dark_mode: !!dark, eye_gaze: !!eg[0]?.eye_gaze },
     session: { idleMinutes: IDLE_MINUTES, maxHours: MAX_HOURS },
   });
 }));
@@ -745,8 +748,8 @@ app.get("/api/locations", requireAgent, wrap(async (req, res) => {
 // Director Console
 // ---------------------------------------------------------
 app.get("/api/director/agents", requireAgent, requireDirector, wrap(async (req, res) => {
-  const rows = await q("SELECT agent_name, email, bio, status, is_director, (pin_hash IS NOT NULL) AS has_pin, (course_code_key IS NOT NULL) AS has_code FROM agents ORDER BY status DESC, agent_name ASC");
-  res.json({ success: true, agents: rows.map((r) => ({ ...r, is_director: !!r.is_director, has_pin: !!r.has_pin, has_code: !!r.has_code })) });
+  const rows = await q("SELECT agent_name, email, bio, status, is_director, (pin_hash IS NOT NULL) AS has_pin, (course_code_key IS NOT NULL) AS has_code, eye_gaze FROM agents ORDER BY status DESC, agent_name ASC");
+  res.json({ success: true, agents: rows.map((r) => ({ ...r, is_director: !!r.is_director, has_pin: !!r.has_pin, has_code: !!r.has_code, eye_gaze: !!r.eye_gaze })) });
 }));
 
 // Dark Mode on/off. The very first time it's switched on, the Director's location
@@ -846,7 +849,7 @@ app.post("/api/director/agents/:name/:action", requireAgent, requireDirector, wr
   const rows = await q("SELECT agent_name, is_director FROM agents WHERE agent_name = ?", [name]);
   const target = rows[0];
   if (!target) return res.status(404).json({ success: false, message: "No such agent" });
-  if (target.is_director && action !== "reset-pin" && action !== "course-code") {
+  if (target.is_director && !["reset-pin", "course-code", "eye-gaze-on", "eye-gaze-off"].includes(action)) {
     return res.status(400).json({ success: false, message: "Can't change the Director's own account here" });
   }
 
@@ -861,6 +864,8 @@ app.post("/api/director/agents/:name/:action", requireAgent, requireDirector, wr
     if (!isPin(pin)) return res.status(400).json({ success: false, message: "PIN must be 4 numbers" });
     await q("UPDATE agents SET pin_hash = ? WHERE agent_name = ?", [hashSecret(pin), name]);
     misses.delete(name.toLowerCase());
+  } else if (action === "eye-gaze-on" || action === "eye-gaze-off") {
+    await q("UPDATE agents SET eye_gaze = ? WHERE agent_name = ?", [action === "eye-gaze-on" ? 1 : 0, name]);
   } else if (action === "course-code") {
     // Director types a code, or leaves it blank for a random one. Shown once, here.
     let code = normCode(req.body?.code);

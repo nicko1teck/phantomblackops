@@ -1654,14 +1654,15 @@ if (IS_DOSSIER) {
             const name = escapeHtml(a.agent_name);
             let actions = "";
             const codeBtn = `<button class="comms-btn" data-act="course-code" type="button">🧮 ${a.has_code ? "New" : "Set"} course code</button>`;
-            if (a.is_director) actions = `<span class="dir-note">That's you</span>
+            const eyeBtn = `<button class="comms-btn" data-act="${a.eye_gaze ? "eye-gaze-off" : "eye-gaze-on"}" type="button">👁️ Eye-gaze mode: ${a.eye_gaze ? "On" : "Off"}</button>`;
+            if (a.is_director) actions = `<span class="dir-note">That's you</span>${eyeBtn}
               <button class="comms-btn" data-act="reset-pin" type="button">🔢 ${a.has_pin ? "Change" : "Set"} math-site PIN</button>`;
             else if (a.status === "pending") actions = `
               <button class="card-btn" data-act="approve" type="button">✅ Approve</button>
               <button class="comms-btn" data-act="reject" type="button">✕ Reject</button>`;
             else actions = `
               <button class="comms-btn" data-act="reset-pin" type="button">🔢 Set PIN</button>
-              ${a.status === "active" ? codeBtn : ""}
+              ${a.status === "active" ? codeBtn + eyeBtn : ""}
               ${a.status === "active"
                 ? `<button class="comms-btn" data-act="deactivate" type="button">Switch off</button>`
                 : `<button class="comms-btn" data-act="activate" type="button">Switch on</button>`}`;

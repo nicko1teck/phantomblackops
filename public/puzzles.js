@@ -271,7 +271,6 @@
   // SIGN OUT: one tap, instantly. Message gone, pad closed and emptied, signed out.
   function signOut() {
     stopAutoHide();
-    pressAt = 0;
     document.body.classList.add("dd-instant");
     revealed = false;
     finishCleanup();
@@ -394,6 +393,7 @@
   let layer = null, flying = [], cleanupTimer = null, revealed = false;
 
   function finishCleanup() {
+    hideDoneOwl();
     clearTimeout(cleanupTimer);
     layer?.remove();
     layer = null;
@@ -480,6 +480,7 @@
   function unreveal() {
     if (!revealed) return;
     revealed = false;
+    hideDoneOwl();
     document.body.classList.remove("dd-reveal");
     for (const f of flying) {
       f.g.style.transitionDelay = "0ms";
@@ -496,32 +497,46 @@
     }
   }
 
-  // The owl works two ways:
-  //   HOLD it (finger or mouse): message shows while held, flies home on release.
-  //   CLICK it (a quick tap, or an eye-gaze dwell click): message STAYS up, then
-  //     the next click anywhere hides it instantly, or it flies home by itself after AUTO_HIDE_MS.
+  // The owl, two ways (the Director switches Eye-gaze mode on per agent):
+  //   NORMAL:   press and HOLD it; the message shows while held and flies home the moment you let go.
+  //   EYE GAZE: one click (a dwell click) shows it and leaves it up. Resting your eyes on the
+  //             message does NOTHING (reading = dwelling). The owl stays lit in its corner:
+  //             one click on it and the letters fly home. Or they fly home on their own after a while.
   const owl = $("bb-owl");
-  const QUICK_CLICK_MS = 400;
-  const AUTO_HIDE_MS = 20000;
-  let pressAt = 0, sticky = false, autoHide = null;
-  const stopAutoHide = () => { clearTimeout(autoHide); autoHide = null; sticky = false; };
+  let eyeGaze = false;
+  let holding = false, autoHide = null, doneOwl = null;
+  const stopAutoHide = () => { clearTimeout(autoHide); autoHide = null; holding = false; };
+  // time to read: 20 s, plus a bit per letter for long messages (up to 90 s)
+  const readingMs = () => Math.min(90000, 20000 + 300 * ((latest && latest.content) || "").length);
+  function showDoneOwl() {
+    const r = owl.getBoundingClientRect();
+    doneOwl = owl.cloneNode(true);
+    doneOwl.removeAttribute("id");
+    doneOwl.className = "bb-logo dd-done-owl";
+    Object.assign(doneOwl.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
+    doneOwl.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      stopAutoHide();
+      unreveal(); // fly home
+    });
+    document.body.appendChild(doneOwl);
+  }
+  function hideDoneOwl() { doneOwl?.remove(); doneOwl = null; }
   owl.addEventListener("pointerdown", (e) => {
     if (!me) return;
     e.preventDefault();
-    if (revealed) { stopAutoHide(); unreveal(); return; } // clicking the owl again puts it away
+    if (revealed) { stopAutoHide(); unreveal(); return; }
     if (!latest) return;
-    pressAt = Date.now();
-    sticky = false;
     reveal();
+    if (eyeGaze) {
+      showDoneOwl();
+      autoHide = setTimeout(() => { stopAutoHide(); unreveal(); }, readingMs());
+    } else holding = true;
   });
   owl.addEventListener("contextmenu", (e) => e.preventDefault());
   ["pointerup", "pointercancel"].forEach((ev) => window.addEventListener(ev, () => {
-    if (!revealed || sticky || !pressAt) return;
-    if (Date.now() - pressAt < QUICK_CLICK_MS) {
-      sticky = true; // a click, not a hold: leave it up
-      autoHide = setTimeout(() => { stopAutoHide(); unreveal(); }, AUTO_HIDE_MS);
-    } else unreveal();
-    pressAt = 0;
+    if (holding) { holding = false; unreveal(); } // let go: fly home
   }));
   window.addEventListener("blur", () => { stopAutoHide(); unreveal(); });
   // The ` key by its position on the keyboard (some Windows layouts treat ` as a
@@ -532,7 +547,6 @@
     if (!isRevealKey(e) || e.repeat || e.target.closest?.("input, textarea, select")) return;
     e.preventDefault();
     if (revealed) return;
-    pressAt = 0;
     reveal();
   });
   window.addEventListener("keyup", (e) => { if (isRevealKey(e)) { stopAutoHide(); unreveal(); } });
@@ -542,7 +556,6 @@
   // and the waiting page appears, as if he just moved on to the next worksheet.
   function emergencyNext() {
     stopAutoHide();
-    pressAt = 0;
     document.body.classList.add("dd-instant"); // no fades, no flying
     revealed = false;
     finishCleanup();
@@ -559,7 +572,11 @@
   // Esc works anytime, even mid-reveal
   window.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); emergencyNext(); } });
   // mid-reveal on a touchscreen: tap anywhere with another finger
-  window.addEventListener("pointerdown", (e) => { if (revealed && !e.target.closest("#bb-owl")) emergencyNext(); });
+  // Holding the owl on a touchscreen: a tap anywhere with another finger = emergency.
+  // (Not in Eye-gaze mode: there, resting the eyes on the message must never do anything.)
+  window.addEventListener("pointerdown", (e) => {
+    if (revealed && !eyeGaze && !e.target.closest("#bb-owl, .dd-done-owl")) emergencyNext();
+  });
 
   // Live news while signed in
   function connect() {
@@ -585,6 +602,7 @@
       .then((d) => {
         if (!d || !d.agent) { goneQuiet(); return; }
         me = d.agent.agent_name;
+        eyeGaze = !!d.agent.eye_gaze;
         star.hidden = false;
         courseUi(true);
         refreshNews();
