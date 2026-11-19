@@ -506,8 +506,8 @@
   let eyeGaze = false;
   let holding = false, autoHide = null, doneOwl = null;
   const stopAutoHide = () => { clearTimeout(autoHide); autoHide = null; holding = false; };
-  // time to read: 20 s, plus a bit per letter for long messages (up to 90 s)
-  const readingMs = () => Math.min(90000, 20000 + 300 * ((latest && latest.content) || "").length);
+  // how long the message stays up before flying home on its own
+  const readingMs = () => 9000;
   function showDoneOwl() {
     const r = owl.getBoundingClientRect();
     doneOwl = owl.cloneNode(true);
