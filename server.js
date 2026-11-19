@@ -355,27 +355,50 @@ app.post("/api/login", wrap(async (req, res) => {
 }));
 
 // ---------------------------------------------------------
-// Course code login (the math site's door). The Director gives each agent a code.
-// Codes are looked up by a keyed hash, so the database never holds the code itself.
+// Course code login (the math site's door).
+//   - an agent's own 4-digit PIN works as their course code
+//   - or a longer code the Director set for them (stored only as a keyed hash)
 // ---------------------------------------------------------
 const normCode = (c) => String(c || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 const codeKey = (c) => crypto.createHmac("sha256", config.SESSION_SECRET).update("course:" + normCode(c)).digest("hex");
+const scryptAsync = (secret, salt) => new Promise((ok, no) =>
+  crypto.scrypt(String(secret), salt, 64, (err, key) => (err ? no(err) : ok(key))));
+async function checkSecretAsync(secret, stored) {
+  const [kind, salt, hash] = String(stored || "").split("$");
+  if (kind !== "scrypt" || !salt || !hash) return false;
+  const test = await scryptAsync(secret, salt);
+  const real = Buffer.from(hash, "hex");
+  return real.length === test.length && crypto.timingSafeEqual(real, test);
+}
 const codeTries = new Map(); // ip -> { n, until }: 8 wrong codes in a row = 15 minute wait
 app.post("/api/course/join", wrap(async (req, res) => {
   const ip = req.ip || "?";
   const t = codeTries.get(ip) || { n: 0, until: 0 };
   if (t.until > Date.now()) return res.status(429).json({ success: false, message: "Too many tries. Wait a few minutes." });
   const code = normCode(req.body?.code);
-  const rows = code.length >= 6 ? await q("SELECT agent_name, status FROM agents WHERE course_code_key = ?", [codeKey(code)]) : [];
-  const a = rows[0];
-  if (!a || a.status !== "active") {
+  let matches = [];
+  if (isPin(code)) {
+    // a PIN: check it against every active agent's PIN. (The Director's PIN only works here, on the
+    // math site; signing in to the app itself still takes the Director's password.)
+    const rows = await q("SELECT agent_name, pin_hash FROM agents WHERE status = 'active' AND pin_hash IS NOT NULL");
+    for (const r of rows) if (await checkSecretAsync(code, r.pin_hash)) matches.push(r.agent_name);
+  } else if (code.length >= 6) {
+    const rows = await q("SELECT agent_name FROM agents WHERE status = 'active' AND course_code_key = ?", [codeKey(code)]);
+    matches = rows.map((r) => r.agent_name);
+  }
+  if (matches.length > 1) {
+    // two agents share that PIN: we can't tell who this is
+    console.warn(`⚠️  Course code sign-in: PIN shared by ${matches.join(", ")}`);
+    return res.status(409).json({ success: false, message: "That code is shared. Ask your teacher for a new one." });
+  }
+  if (!matches.length) {
     t.n += 1;
     if (t.n >= 8) { t.until = Date.now() + 15 * 60000; t.n = 0; }
     codeTries.set(ip, t);
     return res.status(401).json({ success: false, message: "That course code wasn't found." });
   }
   codeTries.delete(ip);
-  setLoginCookie(req, res, a.agent_name, Date.now());
+  setLoginCookie(req, res, matches[0], Date.now());
   res.json({ success: true });
 }));
 

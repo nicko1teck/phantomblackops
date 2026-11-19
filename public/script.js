@@ -1654,7 +1654,8 @@ if (IS_DOSSIER) {
             const name = escapeHtml(a.agent_name);
             let actions = "";
             const codeBtn = `<button class="comms-btn" data-act="course-code" type="button">🧮 ${a.has_code ? "New" : "Set"} course code</button>`;
-            if (a.is_director) actions = `<span class="dir-note">That's you</span>${codeBtn}`;
+            if (a.is_director) actions = `<span class="dir-note">That's you</span>
+              <button class="comms-btn" data-act="reset-pin" type="button">🔢 ${a.has_pin ? "Change" : "Set"} math-site PIN</button>`;
             else if (a.status === "pending") actions = `
               <button class="card-btn" data-act="approve" type="button">✅ Approve</button>
               <button class="comms-btn" data-act="reject" type="button">✕ Reject</button>`;
@@ -1669,7 +1670,7 @@ if (IS_DOSSIER) {
                 ${avatar(a.agent_name)}
                 <div class="dir-info">
                   <div class="convo-name">${name}${a.is_director ? " 🎖️" : ""}</div>
-                  <div class="dir-sub">${statusLabel[a.status] || escapeHtml(a.status)}${!a.is_director && !a.has_pin ? " · no PIN yet" : ""}${a.has_code ? " · 🧮 has course code" : ""}
+                  <div class="dir-sub">${statusLabel[a.status] || escapeHtml(a.status)}${!a.has_pin ? (a.is_director ? " · no math-site PIN yet" : " · no PIN yet") : ""}${a.has_code ? " · 🧮 has course code" : ""}
                     ${a.email ? ` · ${escapeHtml(a.email)}` : ""}</div>
                   ${a.bio ? `<div class="dir-sub">“${escapeHtml(a.bio)}”</div>` : ""}
                 </div>
@@ -1691,7 +1692,10 @@ if (IS_DOSSIER) {
         if (act === "reject" && !confirm(`Reject ${agent}'s request?`)) return;
         if (act === "deactivate" && !confirm(`Switch off ${agent}? They won't be able to log in.`)) return;
         if (act === "reset-pin") {
-          const pin = prompt(`New 4-number PIN for ${agent}:`);
+          const isMe = row.querySelector(".dir-note");
+          const pin = prompt(isMe
+            ? "Your 4-number PIN for the math site (mathflashpuzzles.com).\nYou'll still sign in here with your password."
+            : `New 4-number PIN for ${agent}:`);
           if (pin === null) return;
           if (!/^\d{4}$/.test(pin.trim())) return alert("PIN must be exactly 4 numbers.");
           body = { pin: pin.trim() };
