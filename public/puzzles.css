@@ -19,6 +19,10 @@ body {
   touch-action: manipulation;
 }
 .bb-header {
+  position: sticky; /* stays at the top while the puzzles scroll (and keeps the owl in reach) */
+  top: 0;
+  z-index: 60;
+  box-shadow: 0 2px 10px rgba(20, 50, 100, 0.18);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -250,3 +254,12 @@ body.dd-instant .bb-header, body.dd-instant .bb-main, body.dd-instant .bb-footer
 /* Eye-gaze mode: while a message is showing, the owl glows a little (click it to change the problem back) */
 .bb-logo.is-live .owl { animation: ddLive 2.4s ease-in-out infinite; }
 @keyframes ddLive { 0%, 100% { filter: drop-shadow(0 0 0 rgba(255, 138, 28, 0)); } 50% { filter: drop-shadow(0 0 7px rgba(255, 138, 28, 0.75)); } }
+
+/* Phones: a slimmer header, since it stays on screen */
+@media (max-width: 560px) {
+  .bb-header { padding: 10px 14px; gap: 8px; flex-wrap: nowrap; }
+  .bb-header h1 { font-size: 1.2rem; }
+  .bb-sub { font-size: 0.8rem; }
+  .owl { width: 42px; height: 42px; }
+  .bb-score { padding: 6px 10px; font-size: 0.9rem; white-space: nowrap; }
+}
