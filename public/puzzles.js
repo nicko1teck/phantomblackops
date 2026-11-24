@@ -25,51 +25,59 @@
   const clock = (mins) => { const h = Math.floor(mins / 60) % 12 || 12; const m = mins % 60; return `${h}:${String(m).padStart(2, "0")} PM`; };
 
   // Each template returns { kind, q, answer: [accepted...], choices? }
+  // Every problem is a little story, so a message in one of them doesn't stand out.
+  const TEACHERS = ["Ms. Rivera", "Mr. Chen", "Mrs. Patel", "Mr. Brooks", "Ms. Okafor", "Mrs. Lund"];
+  const two = () => shuffle(NAMES).slice(0, 2);
   const TEMPLATES = [
     () => { const cap = pick([24, 28, 32, 36, 40, 48]); let kids; do { kids = rnd(cap * 3 + 1, cap * 6 - 1); } while (kids % cap === 0);
-      return { kind: "Word problem", q: `A school bus holds ${cap} students. How many buses are needed to take ${kids} students on a field trip?`, answer: [String(Math.ceil(kids / cap))] }; },
-    () => { const a = rnd(2, 20), d = rnd(3, 12); const seq = [0, 1, 2, 3].map((i) => a + i * d);
-      return { kind: "Pattern", q: `What number comes next? ${seq.join(", ")}, ___`, answer: [String(a + 4 * d)] }; },
+      return { kind: "Word problem", q: `${pick(TEACHERS)}'s whole grade is going on a field trip to the science museum. ${kids} students turned in their permission slips, and each school bus can carry ${cap} students. Nobody can be left behind, and no bus can be overfilled. What is the smallest number of buses the school needs?`, answer: [String(Math.ceil(kids / cap))] }; },
+    () => { const a = rnd(2, 20), d = rnd(3, 12); const seq = [0, 1, 2, 3].map((i) => a + i * d); const who = pick(NAMES);
+      return { kind: "Pattern", q: `${who} is saving up for a new bike. Every week ${who} puts the same amount of money into a jar, and writes down the total at the end of each week: $${seq.join(", $")}. If ${who} keeps saving the same way, how many dollars will be in the jar at the end of week 5?`, answer: [String(a + 4 * d), "$" + (a + 4 * d)] }; },
     () => { const a = rnd(1, 5), r = pick([2, 3]); const seq = [0, 1, 2, 3].map((i) => a * r ** i);
-      return { kind: "Pattern", q: `What comes next? ${seq.join(", ")}, ___`, answer: [String(a * r ** 4)] }; },
+      return { kind: "Pattern", q: `In science class, a magic bean plant grows new leaves in a pattern. ${pick(TEACHERS)} counts the leaves every morning and writes them on the board: ${seq.join(", ")}. The number keeps multiplying the same way each day. How many leaves will the plant have tomorrow morning?`, answer: [String(a * r ** 4)] }; },
     () => { const [n2, d2] = pick([[3, 4], [2, 3], [1, 2], [4, 5], [5, 6]]); const [n1, d1] = pick([[1, 2], [1, 3], [1, 4], [2, 3]]);
       let n = n1 * n2, d = d1 * d2; const g = gcd(n, d); n /= g; d /= g; const who = pick(NAMES);
-      return { kind: "Fractions", q: `${who} has ${n2}/${d2} of a pizza and eats ${n1}/${d1} of it. What fraction of the whole pizza did ${who} eat?`, answer: [`${n}/${d}`, ...(String(n / d).length <= 6 ? [String(n / d)] : [])] }; },
-    () => { const [n, d] = pick([[1, 2], [1, 3], [2, 3], [3, 4], [1, 4], [2, 5]]); const k = rnd(2, 4);
+      return { kind: "Fractions", q: `After the soccer game, ${who} brings home ${n2}/${d2} of a large pizza in a box. Later that night ${who} gets hungry and eats ${n1}/${d1} of what is left in the box. What fraction of the WHOLE pizza did ${who} eat? Write your answer as a fraction.`, answer: [`${n}/${d}`, ...(String(n / d).length <= 6 ? [String(n / d)] : [])] }; },
+    () => { const [n, d] = pick([[1, 2], [1, 3], [2, 3], [3, 4], [1, 4], [2, 5]]); const k = rnd(2, 4); const [x, y] = two();
       const right = `${n * k}/${d * k}`;
       const sameValue = (f) => { const [a, b] = f.split("/").map(Number); return a * d === b * n; };
       const wrong = shuffle([`${n * k + 1}/${d * k}`, `${n * k}/${d * k + 1}`, `${n + k}/${d + k}`, `${n * k - 1}/${d * k}`, `${n + 1}/${d}`, `${n}/${d + 1}`, `${n * k + 2}/${d * k}`])
         .filter((w, i, all) => !sameValue(w) && !w.startsWith("0/") && all.indexOf(w) === i).slice(0, 3);
-      return { kind: "Fractions", q: `Which fraction is the same as ${n}/${d}?`, choices: shuffle([right, ...wrong]), answer: [right] }; },
-    () => { const l = rnd(5, 20), w = rnd(3, 12); return { kind: "Geometry", q: `A rectangle is ${l} cm long and ${w} cm wide. What is its perimeter, in cm?`, answer: [String(2 * (l + w))] }; },
-    () => { const sd = rnd(4, 12); return { kind: "Geometry", q: `Each side of a square is ${sd} inches long. What is its area, in square inches?`, answer: [String(sd * sd)] }; },
-    () => { const a = rnd(2, 9), b = rnd(2, 9), c = rnd(2, 20);
+      return { kind: "Fractions", q: `${x} cuts a ribbon into ${d} equal pieces and uses ${n} of them for an art project, so ${x} used ${n}/${d} of the ribbon. ${y} has a ribbon of the same length, cut into ${d * k} equal pieces. Which fraction of the ribbon should ${y} use to match ${x} exactly?`, choices: shuffle([right, ...wrong]), answer: [right] }; },
+    () => { const l = rnd(5, 20), w = rnd(3, 12); const who = pick(NAMES);
+      return { kind: "Geometry", q: `${who} is building a fence around a rectangular vegetable garden that is ${l} meters long and ${w} meters wide. The fence has to go all the way around the outside edge of the garden, with no gaps for the rabbits to sneak through. How many meters of fence does ${who} need?`, answer: [String(2 * (l + w))] }; },
+    () => { const sd = rnd(4, 12);
+      return { kind: "Geometry", q: `The art room has a square rug that is ${sd} feet long on each side. ${pick(TEACHERS)} wants to cover the whole rug with square sheets of paper that are 1 foot by 1 foot, so the class can paint a giant mural on top. How many sheets of paper will it take to cover the rug?`, answer: [String(sd * sd)] }; },
+    () => { const a = rnd(2, 9), b = rnd(2, 9), c = rnd(2, 20); const t = pick(TEACHERS);
       return pick([
-        { kind: "Order of operations", q: `What is ${a} × ${b} + ${c}?`, answer: [String(a * b + c)] },
-        { kind: "Order of operations", q: `What is ${c} + ${a} × ${b}?`, answer: [String(c + a * b)] },
+        { kind: "Order of operations", q: `${t} writes a number sentence on the board and reminds the class to multiply before they add, even though the plus sign comes first when you read it. Solve it the right way: ${c} + ${a} × ${b} = ?`, answer: [String(c + a * b)] },
+        { kind: "Order of operations", q: `${t} writes a number sentence on the board and asks everyone to solve it in their notebooks, remembering that multiplication always comes before addition. What is the answer to ${a} × ${b} + ${c}?`, answer: [String(a * b + c)] },
       ]); },
     () => { const n = rnd(1000, 9999); const to = pick([10, 100]);
-      return { kind: "Rounding", q: `Round ${n.toLocaleString("en-US")} to the nearest ${to === 10 ? "ten" : "hundred"}.`, answer: [String(Math.round(n / to) * to)] }; },
-    () => { const start = rnd(1, 8) * 60 + pick([0, 15, 30, 45]); const dur = rnd(1, 2) * 60 + pick([10, 20, 25, 35, 40, 50]); const end = start + dur;
+      return { kind: "Rounding", q: `The town newspaper reports that ${n.toLocaleString("en-US")} people came to the fall festival this weekend. The editor wants the headline to use a rounder number that is easier to read, so the reporter rounds it to the nearest ${to === 10 ? "ten" : "hundred"}. What number goes in the headline?`, answer: [String(Math.round(n / to) * to)] }; },
+    () => { const start = rnd(1, 8) * 60 + pick([0, 15, 30, 45]); const dur = rnd(1, 2) * 60 + pick([10, 20, 25, 35, 40, 50]); const end = start + dur; const [x, y] = two();
       const right = clock(end); const wrong = shuffle([clock(end + 20), clock(end - 20), clock(end + 60), clock(end - 60)]).slice(0, 3);
-      return { kind: "Time", q: `A movie starts at ${clock(start)} and lasts ${Math.floor(dur / 60)} hour${dur >= 120 ? "s" : ""} ${dur % 60} minutes. When does it end?`, choices: shuffle([right, ...wrong]), answer: [right] }; },
-    () => { const c = rnd(3, 19) * 5, n = rnd(3, 9); const item = pick(["pencil", "eraser", "sticker", "bookmark"]);
-      return { kind: "Money", q: `${/^[aeiou]/.test(item) ? "An" : "A"} ${item} costs $${money(c)}. How much do ${n} of them cost, in dollars?`, answer: [money(c * n), String(+(c * n / 100))] }; },
-    () => { const h = rnd(2, 6), half = Math.random() < 0.5;
-      return { kind: "Time", q: `How many minutes are in ${h}${half ? "½" : ""} hours?`, answer: [String(h * 60 + (half ? 30 : 0))] }; },
-    () => { const a = rnd(3, 12), b = rnd(3, 12); return { kind: "Missing number", q: `${a} × ___ = ${a * b}`, answer: [String(b)] }; },
-    () => { const lee = rnd(6, 20), k = pick([2, 3]); const [x, y] = shuffle(NAMES).slice(0, 2);
-      return { kind: "Logic", q: `${x} has ${k === 2 ? "twice" : "three times"} as many marbles as ${y}. Together they have ${lee * (k + 1)} marbles. How many does ${x} have?`, answer: [String(lee * k)] }; },
-    () => { const d = rnd(0, 6), add = rnd(8, 20); const right = DAYS[(d + add) % 7];
-      return { kind: "Logic", q: `If today is ${DAYS[d]}, what day will it be ${add} days from now?`, choices: shuffle([right, ...shuffle(DAYS.filter((x) => x !== right)).slice(0, 3)]), answer: [right] }; },
+      return { kind: "Time", q: `${x} and ${y} go to the movies on Saturday. The movie starts at ${clock(start)} and lasts ${Math.floor(dur / 60)} hour${dur >= 120 ? "s" : ""} and ${dur % 60} minutes, with no previews. Their ride will pick them up the moment it ends. What time should they ask to be picked up?`, choices: shuffle([right, ...wrong]), answer: [right] }; },
+    () => { const c = rnd(3, 19) * 5, n = rnd(3, 9); const item = pick(["pencil", "eraser", "sticker", "bookmark"]); const who = pick(NAMES);
+      return { kind: "Money", q: `The school store is having a back-to-school sale. ${/^[aeiou]/.test(item) ? "An" : "A"} ${item} costs $${money(c)}. ${who} wants to buy one for each of the ${n} kids in the reading group as a surprise. How much money will ${who} need altogether, in dollars?`, answer: [money(c * n), String(+(c * n / 100))] }; },
+    () => { const h = rnd(2, 6), half = Math.random() < 0.5; const who = pick(NAMES);
+      return { kind: "Time", q: `${who}'s family is driving to visit Grandma for the holidays. The trip takes ${h}${half ? "½" : ""} hours, and ${who} wants to count down the trip in minutes instead of hours to make it feel shorter. How many minutes long is the drive to Grandma's house?`, answer: [String(h * 60 + (half ? 30 : 0))] }; },
+    () => { const a = rnd(3, 12), b = rnd(3, 12); const who = pick(NAMES);
+      return { kind: "Missing number", q: `${who} is setting up chairs for the class play. Every row has exactly ${a} chairs, and there are ${a * b} chairs in all. Fill in the missing number to show how many rows ${who} made: ${a} × ___ = ${a * b}`, answer: [String(b)] }; },
+    () => { const lee = rnd(6, 20), k = pick([2, 3]); const [x, y] = two();
+      return { kind: "Logic", q: `${x} and ${y} pour their marble collections into one big jar to count them. ${x} has ${k === 2 ? "twice" : "three times"} as many marbles as ${y}. Together they count ${lee * (k + 1)} marbles in the jar. How many marbles did ${x} bring?`, answer: [String(lee * k)] }; },
+    () => { const d = rnd(0, 6), add = rnd(8, 20); const right = DAYS[(d + add) % 7]; const who = pick(NAMES);
+      return { kind: "Logic", q: `Today is ${DAYS[d]}. ${who}'s birthday party is exactly ${add} days from today, and ${who} needs to write the day of the week on all the invitations before mailing them. What day of the week will the party be?`, choices: shuffle([right, ...shuffle(DAYS.filter((x) => x !== right)).slice(0, 3)]), answer: [right] }; },
     () => { const ppl = shuffle(NAMES).slice(0, 4); const asks = [["second shortest", 2], ["second tallest", 1], ["shortest", 3], ["tallest", 0]]; const [word, idx] = pick(asks);
-      return { kind: "Logic", q: `${ppl[0]} is taller than ${ppl[1]}. ${ppl[1]} is taller than ${ppl[2]}. ${ppl[2]} is taller than ${ppl[3]}. Who is the ${word}?`, choices: shuffle(ppl), answer: [ppl[idx]] }; },
-    () => { const a = rnd(2, 9) / 10, b = +(rnd(11, 99) / 100).toFixed(2); if (Math.abs(a - b) < 0.01) return TEMPLATES[16]();
-      const big = a > b ? String(a) : String(b);
-      return { kind: "Decimals", q: "Which number is bigger?", choices: shuffle([String(a), String(b)]), answer: [big] }; },
+      return { kind: "Logic", q: `Four friends are lining up for the class photo. ${ppl[0]} is taller than ${ppl[1]}. ${ppl[1]} is taller than ${ppl[2]}. ${ppl[2]} is taller than ${ppl[3]}. The photographer asks the ${word} of the four to hold the class sign. Who holds the sign?`, choices: shuffle(ppl), answer: [ppl[idx]] }; },
+    () => { let a, b; do { a = rnd(2, 9) / 10; b = +(rnd(11, 99) / 100).toFixed(2); } while (Math.abs(a - b) < 0.01);
+      const big = a > b ? String(a) : String(b); const who = pick(NAMES);
+      return { kind: "Decimals", q: `${who} is packing for a long hike and can only carry one water bottle. The blue bottle holds ${a} liters and the green bottle holds ${b} liters. ${who} wants to bring the bottle that holds more water. How many liters does that bottle hold?`, choices: shuffle([String(a), String(b)]), answer: [big] }; },
     () => { const per = rnd(6, 12), boxes = rnd(6, 15); const who = pick(NAMES);
-      return { kind: "Word problem", q: `${who} bakes ${per * boxes} cookies and puts ${per} in each box. How many boxes get filled?`, answer: [String(boxes)] }; },
+      return { kind: "Word problem", q: `For the school bake sale, ${who} bakes ${per * boxes} chocolate chip cookies and packs them into boxes. Each box holds exactly ${per} cookies, and every box has to be completely full before it goes on the sale table. How many full boxes can ${who} make?`, answer: [String(boxes)] }; },
   ];
+  // The problem that carries messages is always this number, and always a story you type an answer to
+  const SECRET_PROBLEM = 4;
   const WARMUPS = [
     "Sphinx of black quartz, judge my vow!",
     "The five boxing wizards jump quickly.",
@@ -97,6 +105,9 @@
     page.hidden = true;
     page.dataset.page = n;
     const kinds = shuffle(TEMPLATES).slice(0, PER_PAGE).map((t) => t());
+    // make the message-carrying problem a typed-answer story (room for a sentence, no answer buttons)
+    const typed = kinds.findIndex((k) => !k.choices);
+    if (typed > -1 && kinds[SECRET_PROBLEM - 1].choices) [kinds[SECRET_PROBLEM - 1], kinds[typed]] = [kinds[typed], kinds[SECRET_PROBLEM - 1]];
     page.innerHTML = `
       <div class="bb-warmup">
         <span class="bb-warmup-tag">Warm-up</span>
@@ -143,7 +154,7 @@
       input?.addEventListener("keydown", (e) => { if (e.key === "Enter") check(); });
       grid.appendChild(card);
     });
-    wrapLetters(page);
+    // (letters no longer need wrapping: the reveal morphs one problem instead)
     return page;
   }
 
@@ -200,9 +211,6 @@
       n.parentNode.replaceChild(frag, n);
     }
   }
-  wrapLetters(document.querySelector(".bb-header"));
-  wrapLetters(document.querySelector(".bb-intro"));
-  wrapLetters(document.querySelector(".bb-footer"));
 
   // first visit: show this page with the next one already waiting
   pageNo -= 1;
@@ -274,7 +282,6 @@
     document.body.classList.add("dd-instant");
     revealed = false;
     finishCleanup();
-    document.body.classList.remove("dd-reveal");
     if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
     goneQuiet();
     fetch("/api/logout", { method: "POST" }).catch(() => {});
@@ -345,129 +352,58 @@
   });
 
   // ---- IN: the reveal ----
+  // One problem on screen quietly morphs into the newest message (same card, same font),
+  // then morphs back. Nothing else on the page moves.
   const graphemes = (str) => (window.Intl && Intl.Segmenter
     ? Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(str), (s) => s.segment)
     : Array.from(str));
-  const FONT = '700 SIZEpx "Trebuchet MS", "Segoe UI", system-ui, sans-serif';
-  const INK = "#23324a";
-  const measureCtx = document.createElement("canvas").getContext("2d");
+  const NOISE = "abcdefghijklmnopqrstuvwxyz0123456789+-×÷=?";
+  const MORPH_MS = 420;
+  const owl = $("bb-owl");
+  let revealed = false;
+  let morph = null; // { el, original, timer }
 
-  // Where each character of the message should land (centered, word-wrapped, as big as fits)
-  function layout(text) {
-    const glyphs = graphemes(text);
-    const maxW = Math.min(window.innerWidth * 0.88, 900);
-    for (let size = 46; size >= 14; size -= 2) {
-      measureCtx.font = FONT.replace("SIZE", size);
-      const lh = size * 1.35;
-      const lines = [[]];
-      let lineW = 0, word = [], wordW = 0;
-      const flushWord = () => {
-        if (!word.length) return;
-        if (lineW + wordW > maxW && lines[lines.length - 1].length) { lines.push([]); lineW = 0; }
-        for (const g of word) { lines[lines.length - 1].push({ ...g, x: lineW + g.dx }); }
-        lineW += wordW;
-        word = []; wordW = 0;
-      };
-      for (const c of glyphs) {
-        const w = measureCtx.measureText(c).width;
-        if (c === " ") { flushWord(); if (lineW) lineW += w; continue; }
-        word.push({ c, w, dx: wordW });
-        wordW += w;
-      }
-      flushWord();
-      const height = lines.length * lh;
-      if (height <= window.innerHeight * 0.8 || size === 14) {
-        const top = (window.innerHeight - height) / 2;
-        const out = [];
-        lines.forEach((line, i) => {
-          const width = line.length ? line[line.length - 1].x + line[line.length - 1].w : 0;
-          const left = (window.innerWidth - width) / 2;
-          for (const g of line) out.push({ c: g.c, x: left + g.x, y: top + i * lh, size });
-        });
-        return out;
-      }
-    }
-    return [];
+  // the problem to use: always the same number on the page (SECRET_PROBLEM)
+  function pickCard() {
+    const cards = document.querySelectorAll(".bb-page:not([hidden]) .bb-card");
+    return (cards[SECRET_PROBLEM - 1] || cards[0])?.querySelector(".bb-q") || null;
   }
 
-  let layer = null, flying = [], cleanupTimer = null, revealed = false;
+  // scramble from what's there into `to`, settling left to right
+  function morphText(el, to, done) {
+    clearInterval(morph?.timer);
+    const target = graphemes(to);
+    const start = performance.now();
+    const tick = () => {
+      const t = Math.min(1, (performance.now() - start) / MORPH_MS);
+      const settled = Math.floor(t * target.length);
+      el.textContent = target.map((c, i) =>
+        i < settled || c === " " ? c : NOISE[Math.floor(Math.random() * NOISE.length)]).join("");
+      if (t >= 1) { clearInterval(morph.timer); el.textContent = to; done && done(); }
+    };
+    morph.timer = setInterval(tick, 30);
+    tick();
+  }
 
+  // put the problem back right now (emergencies, sign out, new page)
   function finishCleanup() {
-    hideDoneOwl();
-    clearTimeout(cleanupTimer);
-    layer?.remove();
-    layer = null;
-    document.querySelectorAll(".ch.is-lifted").forEach((s) => s.classList.remove("is-lifted"));
-    flying = [];
+    if (!morph) return;
+    clearInterval(morph.timer);
+    morph.el.textContent = morph.original;
+    morph.el.classList.remove("is-morphed");
+    morph = null;
+    owl.classList.remove("is-live");
   }
 
   function reveal() {
     if (!me || !latest || revealed) return;
     finishCleanup();
+    const el = pickCard();
+    if (!el) return;
     revealed = true;
-    const text = `${latest.sender}: ${latest.content}`;
-    const targets = layout(text);
-
-    // the page's characters, grouped, in random order so letters come from all over
-    const pool = new Map();
-    for (const sp of shuffle(Array.from(document.querySelectorAll(".ch")).filter((x) => !x.closest("[hidden]")))) {
-      const k = sp.textContent;
-      if (!pool.has(k)) pool.set(k, []);
-      pool.get(k).push(sp);
-    }
-    const used = new Map();
-    const take = (c) => {
-      for (const k of [c, c.toLowerCase(), c.toUpperCase()]) {
-        const list = pool.get(k);
-        if (list && list.length) { const sp = list.pop(); (used.get(k) || used.set(k, []).get(k)).push(sp); return sp; }
-      }
-      for (const k of [c, c.toLowerCase(), c.toUpperCase()]) { // ran out: borrow one already flying
-        const u = used.get(k);
-        if (u && u.length) return u[Math.floor(Math.random() * u.length)];
-      }
-      return null; // not on the page (an emoji, say): it just appears
-    };
-
-    layer = document.createElement("div");
-    layer.className = "dd-layer";
-    document.body.appendChild(layer);
-
-    targets.forEach((t, i) => {
-      const sp = take(t.c);
-      const g = document.createElement("div");
-      g.className = "dd-glyph";
-      g.textContent = t.c;
-      g.style.transitionDelay = `${Math.min(i * 14, 450)}ms`;
-      let from;
-      if (sp) {
-        const r = sp.getBoundingClientRect();
-        const cs = getComputedStyle(sp);
-        const fs = parseFloat(cs.fontSize) || 16;
-        from = { x: r.left, y: r.top + (r.height - fs) / 2, scale: 1, color: cs.color, opacity: 1 };
-        g.style.font = `${cs.fontWeight} ${fs}px ${cs.fontFamily}`;
-        g.dataset.base = fs;
-        sp.classList.add("is-lifted");
-      } else {
-        from = { x: t.x, y: t.y, scale: 1, color: INK, opacity: 0 };
-        g.style.font = FONT.replace("SIZE", t.size);
-        g.dataset.base = t.size;
-      }
-      const toScale = t.size / Number(g.dataset.base);
-      g.style.transform = `translate(${from.x}px, ${from.y}px) scale(${from.scale})`;
-      g.style.color = from.color;
-      g.style.opacity = from.opacity;
-      layer.appendChild(g);
-      flying.push({ g, from, to: { x: t.x, y: t.y, scale: toScale } });
-    });
-
-    document.body.classList.add("dd-reveal");
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      for (const f of flying) {
-        f.g.style.transform = `translate(${f.to.x}px, ${f.to.y}px) scale(${f.to.scale})`;
-        f.g.style.color = INK;
-        f.g.style.opacity = 1;
-      }
-    }));
+    morph = { el, original: el.textContent, timer: null };
+    el.classList.add("is-morphed");
+    morphText(el, `${latest.sender}: ${latest.content}`);
 
     // it's been read now
     if (!latest.read_at) {
@@ -480,15 +416,9 @@
   function unreveal() {
     if (!revealed) return;
     revealed = false;
-    hideDoneOwl();
-    document.body.classList.remove("dd-reveal");
-    for (const f of flying) {
-      f.g.style.transitionDelay = "0ms";
-      f.g.style.transform = `translate(${f.from.x}px, ${f.from.y}px) scale(${f.from.scale})`;
-      f.g.style.color = f.from.color;
-      f.g.style.opacity = f.from.opacity;
-    }
-    cleanupTimer = setTimeout(finishCleanup, 750);
+    owl.classList.remove("is-live");
+    const m = morph;
+    if (m) morphText(m.el, m.original, () => { if (morph === m) { m.el.classList.remove("is-morphed"); morph = null; } });
     // a self-destructing message burns once it's been read here
     if (latest && latest.self_destruct) {
       const id = latest.id;
@@ -498,39 +428,24 @@
   }
 
   // The owl, two ways (the Director switches Eye-gaze mode on per agent):
-  //   NORMAL:   press and HOLD it; the message shows while held and flies home the moment you let go.
+  //   NORMAL:   press and HOLD it; the problem shows the message while held, and changes back on release.
   //   EYE GAZE: one click (a dwell click) shows it and leaves it up. Resting your eyes on the
-  //             message does NOTHING (reading = dwelling). The owl stays lit in its corner:
-  //             one click on it and the letters fly home. Or they fly home on their own after a while.
-  const owl = $("bb-owl");
+  //             message does NOTHING (reading = dwelling). Click the owl again to change it back,
+  //             or it changes back on its own after a few seconds.
   let eyeGaze = false;
-  let holding = false, autoHide = null, doneOwl = null;
+  let holding = false, autoHide = null;
   const stopAutoHide = () => { clearTimeout(autoHide); autoHide = null; holding = false; };
-  // how long the message stays up before flying home on its own
+  // how long the message stays up before changing back on its own
   const readingMs = () => 9000;
-  function showDoneOwl() {
-    const r = owl.getBoundingClientRect();
-    doneOwl = owl.cloneNode(true);
-    doneOwl.removeAttribute("id");
-    doneOwl.className = "bb-logo dd-done-owl";
-    Object.assign(doneOwl.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
-    doneOwl.addEventListener("pointerdown", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      stopAutoHide();
-      unreveal(); // fly home
-    });
-    document.body.appendChild(doneOwl);
-  }
-  function hideDoneOwl() { doneOwl?.remove(); doneOwl = null; }
   owl.addEventListener("pointerdown", (e) => {
     if (!me) return;
     e.preventDefault();
     if (revealed) { stopAutoHide(); unreveal(); return; }
     if (!latest) return;
     reveal();
+    if (!revealed) return;
     if (eyeGaze) {
-      showDoneOwl();
+      owl.classList.add("is-live");
       autoHide = setTimeout(() => { stopAutoHide(); unreveal(); }, readingMs());
     } else holding = true;
   });
@@ -559,7 +474,6 @@
     document.body.classList.add("dd-instant"); // no fades, no flying
     revealed = false;
     finishCleanup();
-    document.body.classList.remove("dd-reveal");
     pad.hidden = true;
     input.value = "";
     note.textContent = "";
@@ -575,7 +489,7 @@
   // Holding the owl on a touchscreen: a tap anywhere with another finger = emergency.
   // (Not in Eye-gaze mode: there, resting the eyes on the message must never do anything.)
   window.addEventListener("pointerdown", (e) => {
-    if (revealed && !eyeGaze && !e.target.closest("#bb-owl, .dd-done-owl")) emergencyNext();
+    if (revealed && !eyeGaze && !e.target.closest("#bb-owl")) emergencyNext();
   });
 
   // Live news while signed in
