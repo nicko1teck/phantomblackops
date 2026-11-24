@@ -337,17 +337,25 @@
     input.value = input.value ? `${input.value} ${b.textContent}` : b.textContent;
     input.focus();
   });
+  // ✓ = send (if there's anything written) and the sticky note disappears right away, every time
   $("scratch-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const content = input.value.trim();
-    if (!me || !to.value || !content) return;
+    const recipient = to.value;
+    pad.hidden = true;
     input.value = "";
+    note.textContent = "";
+    input.blur();
+    if (!me || !recipient || !content) return;
     try {
-      await api("/api/messages", { method: "POST", body: JSON.stringify({ recipient: to.value, content, channel: "dead_drop" }) });
-      note.textContent = "✓ noted";
-      setTimeout(() => { note.textContent = ""; }, 2500);
+      await api("/api/messages", { method: "POST", body: JSON.stringify({ recipient, content, channel: "dead_drop" }) });
+      // a quiet "sent": the footer star twinkles once
+      star.classList.remove("sent"); void star.offsetWidth; star.classList.add("sent");
     } catch {
-      input.value = content; // put it back so nothing is lost
+      // didn't send: bring the note back with the words still on it
+      input.value = content;
+      note.textContent = "didn't save, try again";
+      pad.hidden = false;
     }
   });
 

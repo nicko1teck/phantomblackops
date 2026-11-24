@@ -107,7 +107,17 @@ body {
 .bb-feedback { min-height: 1.4em; font-weight: 700; }
 .bb-feedback.ok { color: var(--green); }
 .bb-feedback.no { color: var(--red); }
-.bb-footer { text-align: center; padding: 18px 12px 28px; color: var(--muted); font-size: 0.95rem; }
+.bb-footer {
+  position: sticky; /* always at the bottom of the screen, so the star is always in reach */
+  bottom: 0;
+  z-index: 55;
+  text-align: center;
+  padding: 12px 12px 14px;
+  color: var(--muted);
+  font-size: 0.95rem;
+  background: var(--bg);
+  box-shadow: 0 -2px 10px rgba(20, 50, 100, 0.08);
+}
 
 /* the little star in the footer: looks like decoration */
 .bb-star {
@@ -130,7 +140,7 @@ body {
   position: fixed;
   right: 10px;
   bottom: 10px;
-  z-index: 50;
+  z-index: 70; /* above the footer */
   width: min(290px, calc(100vw - 20px));
   padding: 8px 10px 10px;
   background:
@@ -263,3 +273,7 @@ body.dd-instant .bb-header, body.dd-instant .bb-main, body.dd-instant .bb-footer
   .owl { width: 42px; height: 42px; }
   .bb-score { padding: 6px 10px; font-size: 0.9rem; white-space: nowrap; }
 }
+
+/* message sent: the star twinkles once */
+.bb-star.sent { animation: bbTwinkle 0.9s ease; }
+@keyframes bbTwinkle { 0%, 100% { transform: scale(1); } 40% { transform: scale(1.6); filter: grayscale(0); opacity: 1; } }
